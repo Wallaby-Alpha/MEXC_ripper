@@ -11,11 +11,26 @@ logger = get_logger("mexc_client")
 class MexcClient:
     """Async client for MEXC Spot Market API with concurrency limiting and retry handling."""
 
+    # MEXC Spot v3 API requires '60m' instead of '1h'
+    INTERVAL_MAP = {
+        "1m": "1m",
+        "5m": "5m",
+        "15m": "15m",
+        "30m": "30m",
+        "1h": "60m",
+        "60m": "60m",
+        "4h": "4h",
+        "1d": "1d",
+        "1w": "1W",
+        "1M": "1M",
+    }
+
     def __init__(self, config: MexcConfig):
         self.config = config
         self.base_url = config.base_url.rstrip("/")
         self.semaphore = asyncio.Semaphore(config.max_concurrent_requests)
         self._session: Optional[aiohttp.ClientSession] = None
+
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -73,7 +88,9 @@ class MexcClient:
         ]
         """
         url = f"{self.base_url}/api/v3/klines"
-        params: Dict[str, Any] = {"symbol": symbol, "interval": interval, "limit": limit}
+        mexc_interval = self.INTERVAL_MAP.get(interval.lower(), interval)
+        params: Dict[str, Any] = {"symbol": symbol, "interval": mexc_interval, "limit": limit}
+
         if start_time:
             params["startTime"] = start_time
         if end_time:
