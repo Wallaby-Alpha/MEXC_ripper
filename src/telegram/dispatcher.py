@@ -74,15 +74,24 @@ class TelegramDispatcher:
     async def _send_alert(self, signal: SignalResult, coin: PumpingCoin) -> None:
         text = format_telegram_alert(signal, coin)
 
-        # Check if dry run or missing credentials
-        if self.config.dry_run or not self.config.bot_token or not self.config.chat_id:
-            logger.info("📢 [TELEGRAM DRY RUN / ALERT DISPATCH]\n%s", text)
+        if not self.config.bot_token or not self.config.chat_id:
+            logger.info("📢 [TELEGRAM SKIPPED - MISSING CREDENTIALS (check .env)]\n%s", text)
+            self.repository.mark_telegram_sent(
+                signal.signal_id,
+                sent_at=None,
+                error="Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in .env",
+            )
+            return
+
+        if self.config.dry_run:
+            logger.info("📢 [TELEGRAM DRY RUN ENABLED]\n%s", text)
             self.repository.mark_telegram_sent(
                 signal.signal_id,
                 sent_at=datetime.now(timezone.utc).isoformat(),
                 error=None,
             )
             return
+
 
         url = f"https://api.telegram.org/bot{self.config.bot_token}/sendMessage"
         payload = {
