@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  mexc-scanner:
+    build: .
+    container_name: mexc-momentum-scanner
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./exports:/app/exports
+      - ./config.yaml:/app/config.yaml

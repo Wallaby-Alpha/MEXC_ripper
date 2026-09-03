@@ -1,0 +1,17 @@
+[Unit]
+Description=MEXC Altcoin Momentum Scanner Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mexc-momentum-scanner
+ExecStart=/opt/mexc-momentum-scanner/venv/bin/python -m src.main
+Restart=always
+RestartSec=10
+EnvironmentFile=/opt/mexc-momentum-scanner/.env
+StandardOutput=append:/opt/mexc-momentum-scanner/logs/service_output.log
+StandardError=append:/opt/mexc-momentum-scanner/logs/service_error.log
+
+[Install]
+WantedBy=multi-user.target

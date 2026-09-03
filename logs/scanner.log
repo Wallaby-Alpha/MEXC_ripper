@@ -1,0 +1,17 @@
+[2026-09-03 00:39:35] [INFO] [database:init_schema:110] Database initialized successfully at C:\Users\phkim\AppData\Local\Temp\tmp6bn4e7cm\test.db
+[2026-09-03 00:39:36] [INFO] [database:init_schema:110] Database initialized successfully at C:\Users\phkim\AppData\Local\Temp\tmpjkrt6h5p\test.db
+[2026-09-03 00:39:37] [INFO] [database:init_schema:110] Database initialized successfully at C:\Users\phkim\AppData\Local\Temp\tmpom3ytn5p\test.db
+[2026-09-03 00:39:49] [INFO] [database:init_schema:110] Database initialized successfully at C:\Users\phkim\AppData\Local\Temp\tmpulhcm2az.db
+[2026-09-03 00:39:49] [INFO] [database:init_schema:110] Database initialized successfully at C:\Users\phkim\AppData\Local\Temp\tmp2pvcj5al.db
+[2026-09-03 00:39:50] [INFO] [database:init_schema:110] Database initialized successfully at C:\Users\phkim\AppData\Local\Temp\tmp8gi_ywhj.db
+[2026-09-03 00:41:06] [INFO] [database:init_schema:110] Database initialized successfully at data/scanner_data.db
+[2026-09-03 00:41:06] [INFO] [database:init_schema:110] Database initialized successfully at data/scanner_data.db
+[2026-09-03 00:41:06] [INFO] [signals_registry:_initialize_detectors:51] SignalRegistry initialized with 12 active detectors.
+[2026-09-03 00:41:06] [INFO] [telegram_dispatcher:start:38] TelegramDispatcher started (dry_run=True, rate_limit=20.0 msg/s)
+[2026-09-03 00:41:06] [INFO] [main:run_single_scan_cycle:48] === Starting Scan Cycle ===
+[2026-09-03 00:41:06] [ERROR] [mexc_client:get_24hr_tickers:48] Exception fetching 24hr tickers: Cannot connect to host api.mexc.com:443 ssl:default [Could not contact DNS servers]
+[2026-09-03 00:41:06] [WARNING] [universe_manager:scan_market:55] No tickers retrieved from MEXC.
+[2026-09-03 00:41:06] [INFO] [main:run_single_scan_cycle:53] Pumping universe is empty. Cycle finished in 0.09s
+[2026-09-03 00:41:06] [INFO] [telegram_dispatcher:stop:55] TelegramDispatcher stopped.
+[2026-09-03 00:41:31] [INFO] [database:init_schema:110] Database initialized successfully at data/scanner_data.db
+[2026-09-03 00:42:58] [INFO] [database:init_schema:110] Database initialized successfully at data/scanner_data.db

@@ -1,0 +1,175 @@
+# ==============================================================================
+# MEXC Altcoin Momentum Scanner - Configuration
+# ==============================================================================
+
+app:
+  name: "mexc-momentum-scanner"
+  version: "1.0.0"
+  db_path: "data/scanner_data.db"
+  log_dir: "logs"
+
+# ------------------------------------------------------------------------------
+# Screening Layer (Pumping Universe)
+# ------------------------------------------------------------------------------
+screening:
+  poll_interval_seconds: 60           # How often to run the screening cycle
+  min_price_change_1h_pct: 3.0        # Default: +3% in 1 hour
+  min_price_change_4h_pct: 6.0        # Default: +6% in 4 hours
+  min_quote_volume_24h_usd: 200000.0  # Min 24h quote volume floor (breadth over precision)
+  volume_surge_multiplier: 2.5        # 1h volume >= 2.5x trailing 24h average hourly volume (tag only)
+  quote_currency: "USDT"              # Focus on USDT spot markets
+  exclude_patterns:
+    - "3L"                            # 3x Long leveraged tokens
+    - "3S"                            # 3x Short leveraged tokens
+    - "5L"                            # 5x Long leveraged tokens
+    - "5S"                            # 5x Short leveraged tokens
+    - "DOWN"
+    - "UP"
+    - "BEAR"
+    - "BULL"
+  stablecoins:
+    - "USDC"
+    - "USDT"
+    - "BUSD"
+    - "TUSD"
+    - "DAI"
+    - "FDUSD"
+    - "EUR"
+    - "TRY"
+    - "USDD"
+    - "PYUSD"
+    - "USDP"
+
+# ------------------------------------------------------------------------------
+# Kline Fetching & Concurrency
+# ------------------------------------------------------------------------------
+mexc:
+  base_url: "https://api.mexc.com"
+  timeout_seconds: 10
+  kline_limit_1h: 60                  # Number of 1h candles to pull for indicators
+  kline_limit_15m: 80                 # Number of 15m candles to pull
+  kline_limit_5m: 100                 # Number of 5m candles to pull
+  max_concurrent_requests: 12         # Concurrency throttle for MEXC public API
+  request_delay_ms: 50                # Gentle delay between batch dispatches
+
+# ------------------------------------------------------------------------------
+# Telegram Alert Dispatcher
+# ------------------------------------------------------------------------------
+telegram:
+  enabled: true
+  rate_limit_msgs_per_second: 20      # Below Telegram's 30/s global limit
+  max_retries: 3
+  retry_backoff_seconds: 2.0
+  dry_run: false                      # Override by DRY_RUN env var
+
+# ------------------------------------------------------------------------------
+# Signal Engine Detectors Configuration
+# ------------------------------------------------------------------------------
+signals:
+  # Signal A: HTF trend + LTF pullback reclaim
+  signal_a:
+    enabled: true
+    htf_ema_period: 50
+    ltf_ema_fast: 20
+    ltf_ema_slow: 50
+    htf_structure_lookback: 12         # Lookback candles for HH/HL structure check
+    max_pullback_depth_pct: 7.0       # Ignore dips deeper than this
+
+  # Signal B: Breakout + retest of prior resistance
+  signal_b:
+    enabled: true
+    lookback_candles_15m: 32          # 4-8 hours range
+    resistance_retest_tolerance_pct: 1.2 # Within 1.2% of broken resistance
+    volume_breakout_multiplier: 1.5   # Breakout candle volume multiplier
+
+  # Signal C: RSI reset in confirmed uptrend
+  signal_c:
+    enabled: true
+    rsi_period: 14
+    rsi_pullback_min: 38.0
+    rsi_pullback_max: 52.0
+    timeframe: "5m"                   # '5m' or '15m'
+
+  # Signal D: RSI momentum extension (The "Chase" signal)
+  signal_d:
+    enabled: true
+    rsi_period: 14
+    rsi_threshold: 70.0
+    candles_since_below_50_max: 20    # Fresh momentum
+
+  # Signal E: VWAP reclaim
+  signal_e:
+    enabled: true
+    timeframe: "5m"                   # '5m' or '15m'
+    max_dip_below_vwap_pct: 4.0
+
+  # Signal F: Volume spike / relative volume surge
+  signal_f:
+    enabled: true
+    volume_ratio_threshold: 3.0       # 3x prior 20-candle average
+    lookback_candles: 20
+    timeframe: "5m"                   # '5m' or '15m'
+
+  # Signal G: Support / prior-swing-low bounce
+  signal_g:
+    enabled: true
+    pivot_window: 4                   # Swing low detection window
+    support_proximity_pct: 1.5        # Within 1.5% of prior swing low
+    timeframe: "15m"
+
+  # Signal H: Bollinger Band squeeze + breakout
+  signal_h:
+    enabled: true
+    bb_period: 20
+    bb_std_dev: 2.0
+    squeeze_lookback: 30              # Lookback to evaluate bandwidth percentile
+    squeeze_percentile_threshold: 20.0 # Bandwidth in bottom 20th percentile
+    timeframe: "15m"
+
+  # Signal I: MACD bullish cross in uptrend
+  signal_i:
+    enabled: true
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+    timeframe: "15m"                  # '15m' or '1h'
+
+  # Signal J: Moving average stack alignment
+  signal_j:
+    enabled: true
+    ema_fast: 9
+    ema_mid: 21
+    ema_slow: 50
+    max_candles_since_aligned: 2      # Fresh alignment (1-2 candles ago)
+    timeframe: "15m"
+
+  # Signal K: (Bonus) Supertrend bullish flip
+  signal_k:
+    enabled: true
+    period: 10
+    multiplier: 3.0
+    timeframe: "15m"
+
+  # Signal L: (Bonus) Stochastic RSI oversold bullish crossover
+  signal_l:
+    enabled: true
+    rsi_period: 14
+    stoch_period: 14
+    k_period: 3
+    d_period: 3
+    oversold_threshold: 25.0
+    timeframe: "15m"
+
+# ------------------------------------------------------------------------------
+# Forward-Return Tracker
+# ------------------------------------------------------------------------------
+forward_returns:
+  enabled: true
+  check_interval_seconds: 60          # How often to check for pending returns
+  intervals_minutes:
+    - 5                               # +5m
+    - 15                              # +15m
+    - 60                              # +1h
+    - 240                             # +4h
+    - 1440                            # +24h
+  batch_size: 50                      # Max pending signals to evaluate per pass
