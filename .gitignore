@@ -1,0 +1,27 @@
+# Environment & Secrets
+.env
+*.env
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Data, Logs & Exports (prevent committing local DB or logs)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+logs/*.log
+exports/*.csv
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
