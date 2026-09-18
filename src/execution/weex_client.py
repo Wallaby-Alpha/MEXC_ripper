@@ -90,12 +90,13 @@ class WeexClient:
 
     def get_server_time(self) -> int:
         """Fetch WEEX server timestamp."""
-        res = self._request("GET", "/api/v3/public/time", is_contract=True)
+        res = self._request("GET", "/capi/v3/market/time", is_contract=True)
         return int(res.get("data", {}).get("serverTime", time.time() * 1000))
 
     def get_account_assets(self, is_contract: bool = True) -> Dict[str, Any]:
         """Fetch account balance and available equity."""
-        return self._request("GET", "/api/v3/account/assets", is_contract=is_contract)
+        path = "/capi/v3/account/balance" if is_contract else "/api/v3/account/"
+        return self._request("GET", path, is_contract=is_contract)
 
     # ------------------------------------------------------------------------
     # Trade Execution Endpoints
@@ -115,11 +116,11 @@ class WeexClient:
         """Place order on WEEX with optional preset exchange-level TP/SL."""
         payload: Dict[str, Any] = {
             "symbol": symbol,
-            "side": side,
-            "type": order_type,
+            "side": side.lower(),
+            "type": order_type.lower(),
             "size": str(size),
         }
-        if price is not None and order_type == "limit":
+        if price is not None and order_type.lower() == "limit":
             payload["price"] = str(price)
 
         if preset_take_profit_price is not None and preset_take_profit_price > 0:
@@ -128,7 +129,15 @@ class WeexClient:
         if preset_stop_loss_price is not None and preset_stop_loss_price > 0:
             payload["presetStopLossPrice"] = f"{preset_stop_loss_price:.8f}".rstrip("0").rstrip(".")
 
-        return self._request("POST", "/api/v3/trade/order", data=payload, is_contract=is_contract)
+        # In WEEX Contract V3, the canonical endpoint is /capi/v3/order
+        endpoint = "/capi/v3/order" if is_contract else "/api/v3/order"
+        try:
+            return self._request("POST", endpoint, data=payload, is_contract=is_contract)
+        except Exception as exc:
+            if is_contract:
+                logger.warning("Primary endpoint %s failed (%s), attempting fallback /capi/v2/order/placeOrder...", endpoint, exc)
+                return self._request("POST", "/capi/v2/order/placeOrder", data=payload, is_contract=True)
+            raise
 
     def place_tpsl_order(
         self,
