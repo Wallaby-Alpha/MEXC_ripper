@@ -3,6 +3,7 @@ import pytest
 from src.execution.weex_client import WeexClient
 from src.execution.weex_executor import WeexExecutor
 from src.execution.paper_executor import PaperExecutor
+from src.execution.weex_symbol_mapper import WeexSymbolResolver
 
 
 def test_weex_signature_generation():
@@ -32,7 +33,8 @@ def test_weex_signature_generation():
 
 def test_weex_executor_safety_gate():
     # 1. With live_enabled=False, must NEVER call live endpoints and must fall back safely to paper trading
-    executor = WeexExecutor(live_enabled=False)
+    resolver = WeexSymbolResolver(auto_fetch=False)
+    executor = WeexExecutor(symbol_resolver=resolver, live_enabled=False)
     assert executor.live_enabled is False
 
     res = executor.open_position(
@@ -96,7 +98,12 @@ def test_weex_native_tpsl_placement(monkeypatch):
     monkeypatch.setattr(client, "place_order", mock_place_order)
     monkeypatch.setattr(client, "place_tpsl_order", mock_place_tpsl)
 
-    executor = WeexExecutor(weex_client=client, live_enabled=True)
+    resolver = WeexSymbolResolver(auto_fetch=False)
+    resolver._build_mappings([
+        {"symbol": "cmt_suiusdt", "tick_size": 4, "size_increment": 1.0, "minOrderSize": 1.0}
+    ])
+
+    executor = WeexExecutor(weex_client=client, symbol_resolver=resolver, live_enabled=True)
     res = executor.open_position(
         symbol="SUIUSDT",
         side="BUY",
@@ -116,7 +123,7 @@ def test_weex_native_tpsl_placement(monkeypatch):
     # Verify calls
     assert len(calls) == 3
     assert calls[0]["type"] == "order"
-    assert calls[0]["symbol"] == "SUI_USDT"
+    assert calls[0]["symbol"] == "cmt_suiusdt"
     assert calls[1]["type"] == "tpsl"
     assert calls[1]["plan_type"] == "TAKE_PROFIT"
     assert calls[1]["trigger_price"] == 2.15

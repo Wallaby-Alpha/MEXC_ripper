@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from src.execution.base_executor import BaseExecutor
 from src.execution.weex_client import WeexClient
 from src.execution.paper_executor import PaperExecutor
+from src.execution.weex_symbol_mapper import WeexSymbolResolver
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ class WeexExecutor(BaseExecutor):
         self,
         weex_client: Optional[WeexClient] = None,
         paper_fallback: Optional[PaperExecutor] = None,
+        symbol_resolver: Optional[WeexSymbolResolver] = None,
         live_enabled: Optional[bool] = None,
     ):
         self.client = weex_client or WeexClient(
@@ -24,6 +26,7 @@ class WeexExecutor(BaseExecutor):
             passphrase=os.getenv("WEEX_PASSPHRASE", ""),
         )
         self.paper = paper_fallback or PaperExecutor()
+        self.resolver = symbol_resolver or WeexSymbolResolver()
         self.active_tpsl_orders: Dict[str, Dict[str, Any]] = {}
 
         # Strict safety gate: defaults to False unless explicitly set to 'true' in env
@@ -60,22 +63,37 @@ class WeexExecutor(BaseExecutor):
             setup_tier=setup_tier,
         )
 
+        # Resolve MEXC symbol to canonical WEEX contract symbol (e.g. SUIUSDT -> cmt_suiusdt)
+        weex_symbol = self.resolver.resolve(symbol)
+        if not weex_symbol:
+            logger.warning("[WEEX SKIPPED] %s is not listed as a perpetual contract on WEEX. Software paper position logged.", symbol)
+            return {
+                **paper_res,
+                "weex_live": False,
+                "status": "SKIPPED_UNLISTED_ON_WEEX",
+                "note": f"{symbol} not listed on WEEX perpetual contracts",
+            }
+
+        # Format price and size according to WEEX exchange tick size & lot increments
+        qty = float(self.resolver.format_size(weex_symbol, size_usdt / entry_price if entry_price > 0 else 1.0))
+        tp_price = float(self.resolver.format_price(weex_symbol, take_profit))
+        sl_price = float(self.resolver.format_price(weex_symbol, stop_loss))
+
         if not self.live_enabled:
             logger.info(
-                "[WEEX DRY-RUN] Would have placed %s on WEEX for %s: Size $%.0f USDT | SL: $%.6f (-3.5%%) | TP: $%.6f (+7.5%%)",
+                "[WEEX DRY-RUN] Would have placed %s on WEEX for %s (%s): Qty %.4f | SL: $%.6f | TP: $%.6f",
                 side,
                 symbol,
-                size_usdt,
-                stop_loss,
-                take_profit,
+                weex_symbol,
+                qty,
+                sl_price,
+                tp_price,
             )
-            return {**paper_res, "weex_live": False, "note": "Dry-run execution"}
+            return {**paper_res, "weex_live": False, "weex_symbol": weex_symbol, "note": "Dry-run execution"}
 
         # Live Execution on WEEX with Native Exchange TP/SL
         try:
-            logger.info("[WEEX LIVE ORDER] Submitting market entry for %s (%s)...", symbol, side)
-            weex_symbol = symbol if "_" in symbol else symbol.replace("USDT", "_USDT")
-            qty = round(size_usdt / entry_price, 4) if entry_price > 0 else 1.0
+            logger.info("[WEEX LIVE ORDER] Submitting market entry for %s as %s (%s)...", symbol, weex_symbol, side)
             pos_side = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
 
             # 1. Market Entry Order with preset TP/SL parameters attached
@@ -84,12 +102,12 @@ class WeexExecutor(BaseExecutor):
                 side="open_long" if pos_side == "LONG" else "open_short",
                 order_type="market",
                 size=qty,
-                preset_take_profit_price=take_profit,
-                preset_stop_loss_price=stop_loss,
+                preset_take_profit_price=tp_price,
+                preset_stop_loss_price=sl_price,
                 is_contract=True,
             )
             main_order_id = order_res.get("data", {}).get("orderId", "N/A")
-            logger.info("[WEEX ENTRY FILLED] %s Order ID: %s", symbol, main_order_id)
+            logger.info("[WEEX ENTRY FILLED] %s (%s) Order ID: %s", symbol, weex_symbol, main_order_id)
 
             # 2. Guarantee Native Exchange-Level Take Profit Order
             native_tp_id = None
@@ -97,14 +115,14 @@ class WeexExecutor(BaseExecutor):
                 tp_res = self.client.place_tpsl_order(
                     symbol=weex_symbol,
                     plan_type="TAKE_PROFIT",
-                    trigger_price=take_profit,
+                    trigger_price=tp_price,
                     size=qty,
                     position_side=pos_side,
                 )
                 native_tp_id = tp_res.get("data", {}).get("orderId")
-                logger.info("[WEEX NATIVE TP CONFIRMED] %s Target: $%.6f | Order ID: %s", symbol, take_profit, native_tp_id)
+                logger.info("[WEEX NATIVE TP CONFIRMED] %s Target: $%.6f | Order ID: %s", weex_symbol, tp_price, native_tp_id)
             except Exception as exc:
-                logger.warning("[WEEX NATIVE TP WARNING] %s failed to set exchange TP (%s)", symbol, exc)
+                logger.warning("[WEEX NATIVE TP WARNING] %s failed to set exchange TP (%s)", weex_symbol, exc)
 
             # 3. Guarantee Native Exchange-Level Stop Loss Order
             native_sl_id = None
@@ -112,14 +130,14 @@ class WeexExecutor(BaseExecutor):
                 sl_res = self.client.place_tpsl_order(
                     symbol=weex_symbol,
                     plan_type="STOP_LOSS",
-                    trigger_price=stop_loss,
+                    trigger_price=sl_price,
                     size=qty,
                     position_side=pos_side,
                 )
                 native_sl_id = sl_res.get("data", {}).get("orderId")
-                logger.info("[WEEX NATIVE SL CONFIRMED] %s Invalidation: $%.6f | Order ID: %s", symbol, stop_loss, native_sl_id)
+                logger.info("[WEEX NATIVE SL CONFIRMED] %s Invalidation: $%.6f | Order ID: %s", weex_symbol, sl_price, native_sl_id)
             except Exception as exc:
-                logger.warning("[WEEX NATIVE SL WARNING] %s failed to set exchange SL (%s)", symbol, exc)
+                logger.warning("[WEEX NATIVE SL WARNING] %s failed to set exchange SL (%s)", weex_symbol, exc)
 
             self.active_tpsl_orders[symbol] = {
                 "tp_order_id": native_tp_id,
@@ -130,6 +148,7 @@ class WeexExecutor(BaseExecutor):
             return {
                 "status": "FILLED_WEEX_LIVE",
                 "symbol": symbol,
+                "weex_symbol": weex_symbol,
                 "order_id": main_order_id,
                 "native_tp_order_id": native_tp_id,
                 "native_sl_order_id": native_sl_id,
