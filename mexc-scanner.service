@@ -1,0 +1,17 @@
+[Unit]
+Description=MEXC Altcoin Momentum Continuation Scanner & Telegram Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mexc-momentum-scanner
+EnvironmentFile=/opt/mexc-momentum-scanner/.env
+ExecStart=/opt/mexc-momentum-scanner/venv/bin/python run_scanner.py --interval 5m --poll-sec 60 --top-coins 40 --min-score 70
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

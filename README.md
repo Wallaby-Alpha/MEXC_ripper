@@ -1,135 +1,167 @@
-# MEXC Altcoin Momentum Scanner + Multi-Signal Telegram Alerts
+# MEXC Altcoin Momentum Continuation Scanner
 
-An autonomous, high-throughput, async market scanner and multi-signal research engine for MEXC spot markets. It continuously screens the universe for pumping coins, evaluates 12 independent entry heuristics concurrently (Signals A through L), dispatches tagged, rate-limited alerts to Telegram, and persists every indicator snapshot and forward price outcome (+5m, +15m, +1h, +4h, +24h) to SQLite for retrospective statistical validation.
-
----
-
-## 🎯 Core Features
-
-1. **Screening Layer (Pumping Universe)**:
-   - Polls MEXC spot 24h tickers and computes 1h & 4h price changes.
-   - Generous, broad filters (e.g. +3% 1h or +6% 4h, low $200k quote volume floor).
-   - Filters out stablecoin pairs (`USDC`, `FDUSD`, `TUSD`, etc.) and leveraged tokens (`3L`, `3S`, `5L`, `5S`, `BULL`, `BEAR`, `DOWN`, `UP`).
-   - Logs every `ENTER` and `EXIT` universe transition event to SQLite.
-
-2. **Independent Signal Engine (Signals A through L)**:
-   - **Signal A**: `[A] 🔁 PULLBACK RECLAIM` — HTF 1h EMA(50) uptrend + LTF 5m EMA(20/50) pullback and close reclaim.
-   - **Signal B**: `[B] 🎯 BREAKOUT RETEST` — 15m prior resistance breakout with volume followed by retest & hold.
-   - **Signal C**: `[C] 📉 RSI RESET` — 1h uptrend with 5m/15m RSI(14) pullback into 38–52 zone and upward reversal.
-   - **Signal D**: `[D] 🚀 RSI MOMENTUM` — 1h RSI(14) crossing above 70 fresh momentum extension (the "chase" signal).
-   - **Signal E**: `[E] 📊 VWAP RECLAIM` — 5m/15m VWAP dip and reclaim during 1h uptrend.
-   - **Signal F**: `[F] 📢 VOLUME SPIKE` — 5m/15m candle volume $\ge 3\times$ 20-candle average with ATR range context.
-   - **Signal G**: `[G] 🛟 SUPPORT BOUNCE` — 15m/1h swing-low pivot detection and reversal candle formation.
-   - **Signal H**: `[H] 🎈 BB SQUEEZE BREAK` — 15m Bollinger Bands (20, 2) bandwidth squeeze followed by upper band close.
-   - **Signal I**: `[I] ⚡ MACD CROSS` — 15m/1h MACD(12,26,9) bullish signal line cross with expanding histogram.
-   - **Signal J**: `[J] 📐 EMA STACK` — 15m EMA(9) > EMA(21) > EMA(50) fresh alignment.
-   - **Signal K (Bonus)**: `[K] 🟢 SUPERTREND FLIP` — 15m Supertrend(10, 3.0) bullish trend flip.
-   - **Signal L (Bonus)**: `[L] 🔀 STOCH RSI CROSS` — 15m Stochastic RSI oversold ($<25$) bullish crossover.
-
-3. **Telegram Alert Dispatcher**:
-   - Distinct emojis and tags per signal type.
-   - Exact message template with Symbol, Price (+1h/+4h %), Reasoning with numerical indicator values, Volume Surge, UTC Timestamp, and Signal UUID.
-   - Asynchronous queue with rate limiting (~20 msgs/s) and FloodWait backoff.
-   - Duplicate prevention on exact candle close timestamps.
-
-4. **Forward-Return Tracker**:
-   - Automated background worker that revisits logged signals at **+5m, +15m, +1h, +4h, +24h**.
-   - Calculates return %, Max Favorable Excursion (Max Runup), and Max Adverse Excursion (Max Drawdown).
-   - Backfills directly from historical MEXC klines.
-
-5. **Analytics CLI & Data Exports**:
-   - `python -m src.cli stats` — Database counts & health.
-   - `python -m src.cli signals` — Breakdown of fires by signal type.
-   - `python -m src.cli performance` — Win rates and average forward returns matrix.
-   - `python -m src.cli export` — Export dataset to CSV for offline Python/Jupyter analysis.
+A research-grade, two-phase algorithmic system designed to identify low/mid-cap altcoins on **MEXC** that are **already pumping and statistically likely to continue running**, filtering out fragile moves and pump-and-dump fade traps.
 
 ---
 
-## 🚀 Quickstart
+## Architecture Overview
 
-### 1. Install Dependencies
+The system strictly enforces **zero lookahead bias** and shares a single, pure-function indicator/feature layer between research and production:
+
+1. **Phase 1 — Historical Backtester (`run_backtest.py`)**:
+   - Reconstructs a **Point-in-Time** symbol universe for any target historical window (excluding survivorship bias and future-listed tokens).
+   - Ingests and caches 5m OHLCV klines and trade-level CVD (Cumulative Volume Delta) into a local SQLite database (`data/raw/mexc_market_data.sqlite`).
+   - Walks forward bar-by-bar applying a cheap pre-filter (`RVOL > 2.0x` or `1h return > 3%`).
+   - Logs the **full feature vector** for every candidate that passes the pre-filter (pass or fail on compound rules).
+   - Tracks forward horizons (4h, 12h, 24h, 48h) recording ground-truth continuation metrics: Max Favorable Excursion (MFE %), time to +10%/+25%/+50%, max drawdown before peak, and round-trip below entry.
+   - Outputs feature bucket separation tables, joint ML importance models, and styled Markdown/HTML reports.
+
+2. **Phase 2 — Live Scanner (`run_scanner.py`)**:
+   - **Reuses `src/features/` directly without modification** — guaranteeing 100% calculation parity between backtest and live environments.
+   - Polls MEXC live REST endpoints on the validated candle interval (5m).
+   - Flags candidates in real time with formatted console tables, JSONL audit logs (`data/scanner_alerts.jsonl`), and optional webhook notifications.
+   - Built-in **Paper Trader** (`src/live/paper_trader.py`) simulates virtual fills, trailing stops, and forward tracking without risking real capital.
+
+---
+
+## Lookahead Bias Prevention
+
+The feature extraction pipeline (`src/features/feature_pipeline.py`) is designed as a **pure function**:
+```
+extract_features_point_in_time(symbol, timestamp_ms, klines_df, ...) -> dict
+```
+- **Strict Timestamp Slicing**: Every input series is filtered strictly to `timestamp <= timestamp_ms`. Future bars are physically inaccessible to the calculation logic.
+- **Automated Verification**: `tests/test_lookahead_bias.py` verifies that mutating future bars ($t+1 \dots t+k$) with 100x price spikes and volume explosions has zero effect on feature outputs evaluated at bar $t$.
+
+---
+
+## Feature Vector Specification
+
+| Category | Feature | Description |
+|---|---|---|
+| **Volume** | `rvol_20`, `rvol_60` | Current bar volume relative to trailing 20/60-bar baseline |
+| | `volume_persistence` | Number of consecutive bars holding $\ge 1.5\times$ baseline volume |
+| | `cvd_rolling` | Cumulative taker buy volume minus taker sell volume from `aggTrades` (`isBuyerMaker`) |
+| | `cvd_price_divergence` | Flags divergence (e.g. price rising on net negative taker flow = fragile pump) |
+| **Structure** | `pre_breakout_base_quality` | Bollinger bandwidth / ATR tightness over 20 bars prior to breakout |
+| | `breakout_flag` | Close > prior 20-bar high $\times (1 + \text{buffer})$ |
+| | `retest_hold_flag` | Price pulled back to breakout level and held on lower volume |
+| | `swing_structure_hh_hl` | Pivot-based higher-highs and higher-lows trend sequence |
+| | `extension_atr` | $(\text{Close} - \text{Breakout Level}) / \text{ATR}_{14}$ |
+| **Momentum** | `rsi_14` | 14-period Wilder RSI |
+| | `rsi_pullback_depth` | Lowest RSI recorded at local troughs during the move (healthy trends hold 40-50) |
+| | `macd_histogram_slope` | 3-bar slope of MACD histogram (momentum acceleration vs deceleration) |
+| **Relative Strength** | `rs_vs_btc_1h`, `4h`, `24h` | Coin return minus BTC return over matching lookbacks |
+| | `rs_vs_eth_1h`, `4h`, `24h` | Coin return minus ETH return over matching lookbacks |
+| **Liquidity** | `turnover_24h` | Rolling 24-hour USDT quote turnover |
+| **Derivatives** | `funding_rate_level`, `trend` | MEXC contract funding rate level and 3-cycle trend (with graceful fallback) |
+
+---
+
+## Directory Structure
+
+```
+mexc-momentum-scanner/
+├── README.md
+├── requirements.txt
+├── config.py
+├── .env.example
+├── run_backtest.py            # Phase 1 CLI runner
+├── run_scanner.py             # Phase 2 Live Scanner CLI runner
+├── data/
+│   ├── raw/                   # SQLite database (klines, trades, metadata)
+│   └── processed/             # CSV and Parquet labeled candidate datasets
+├── reports/                   # Markdown and HTML research reports
+├── src/
+│   ├── data_ingestion/        # MEXC API client, cache, universe reconstruction
+│   ├── features/              # Pure-function zero-lookahead feature modules
+│   ├── backtest/              # Engine, forward labeler, analysis, report generator
+│   └── live/                  # Real-time polling scanner, alerting, paper trader
+└── tests/                     # Lookahead tests, unit tests, integration pipeline tests
+```
+
+---
+
+## Installation & Setup
+
 ```bash
-python -m venv venv
-# Linux / macOS:
-source venv/bin/activate
-# Windows:
-.\venv\Scripts\activate
+# Clone or navigate to the workspace
+cd mexc-momentum-scanner
 
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-Edit `.env`:
-```env
-TELEGRAM_BOT_TOKEN=your_bot_token_here
-TELEGRAM_CHAT_ID=your_chat_id_here
-DRY_RUN=false
-```
-*(Note: If `DRY_RUN=true` or credentials are blank, alerts will be printed to console/logs instead of Telegram)*
+---
 
-### 3. Run a Single Test Scan
-```bash
-python -m src.cli scan-once
-```
+## Running the Automated Test Suite
 
-### 4. Start the Scanner Daemon
+Run the full test suite including strict lookahead-bias verification:
 ```bash
-python -m src.main
+pytest -v
 ```
 
 ---
 
-## 📊 CLI Commands
+## Phase 1: Historical Backtest & Research Report
 
-| Command | Description |
-|---|---|
-| `python -m src.cli scan-once` | Runs a single scan cycle and exits |
-| `python -m src.cli stats` | Displays total signals, universe events, and return status |
-| `python -m src.cli signals` | Displays table of signal counts by type |
-| `python -m src.cli performance` | Displays win rates at 15m/1h/24h and average returns |
-| `python -m src.cli export` | Exports complete signal and outcome dataset to CSV in `exports/` |
-| `python -m src.cli backfill` | Manually triggers forward return backfill |
+Run the walk-forward backtester on the default window (`2026-09-01T00:00:00Z` to `2026-09-10T00:00:00Z` UTC):
 
----
-
-## 🛠️ Configuration (`config.yaml`)
-
-All parameters are customizable without code modifications in `config.yaml`:
-- **`screening`**: 1h/4h % thresholds, volume surge multiplier, quote volume floor, excluded patterns.
-- **`mexc`**: Request limits, concurrency limits, kline lookbacks.
-- **`signals`**: Toggle individual signals `enabled: true/false` and adjust parameters (periods, tolerances, thresholds).
-- **`forward_returns`**: Evaluation intervals (+5m, +15m, +1h, +4h, +24h) and check frequency.
-
----
-
-## 🌐 DigitalOcean Droplet Deployment
-
-### Option A: Systemd Service (Recommended)
-1. Clone the repository to `/opt/mexc-momentum-scanner` on your droplet.
-2. Set up virtualenv and install requirements:
-   ```bash
-   cd /opt/mexc-momentum-scanner
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-3. Copy the systemd service file:
-   ```bash
-   sudo cp deploy/mexc-scanner.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable mexc-scanner
-   sudo systemctl start mexc-scanner
-   ```
-4. View live logs:
-   ```bash
-   journalctl -u mexc-scanner -f
-   ```
-
-### Option B: Docker Compose
 ```bash
-docker compose up -d --build
+python run_backtest.py --start 2026-09-01T00:00:00Z --end 2026-09-10T00:00:00Z --interval 5m --max-symbols 30 --min-turnover 50000
 ```
+
+### CLI Arguments
+- `--start`: ISO timestamp for backtest start (default: `2026-09-01T00:00:00Z`).
+- `--end`: ISO timestamp for backtest end (default: `2026-09-10T00:00:00Z`).
+- `--interval`: Candle interval (default: `5m`).
+- `--max-symbols`: Max universe symbols to evaluate (default: `30`).
+- `--min-turnover`: Minimum 24-hour quote volume in USDT (default: `$50,000`).
+
+### Generated Artifacts
+- Processed dataset: `data/processed/candidates_labeled.csv` and `data/processed/candidates_labeled.parquet`
+- Markdown report: `reports/backtest_report.md`
+- Interactive HTML report: `reports/backtest_report.html`
+
+> [!NOTE]
+> **Methodological Note on Sample Size:**
+> When running over a 10-day window, results are directional. We explicitly recommend expanding ingestion to a **3 to 6 month window** and applying a **strict 70/30 chronological train/test split** before deploying capital.
+
+---
+
+## Phase 2: Live Momentum Scanner & Paper Trader
+
+Run the live scanner in real-time polling mode:
+
+```bash
+# Continuous real-time polling (polls every 60 seconds across top liquid alts)
+python run_scanner.py --interval 5m --poll-sec 60 --top-coins 40 --min-score 70.0
+
+# Single dry-run iteration (smoketest against live data)
+python run_scanner.py --dry-run
+```
+
+### Validated Setup Archetypes Identified
+The scanner classifies live opportunities into 3 statistically grounded archetypes:
+1. **Tier 1: `PURE_BREAKOUT_CONTINUATION`**
+   - High-probability expansion breaking above prior 20-bar consolidation resistance.
+   - Early sustained RVOL ($1.8\times - 4.5\times$), positive CVD taker delta, expanding ATR.
+2. **Tier 1: `RETEST_HOLD_SPRINGBOARD`**
+   - Prior resistance level tested and held as new support with decreasing volume on the dip.
+   - Backtest proved this archetype has a **25.7% continuation hit rate** and **+16.7% average peak run**.
+3. **Tier 2: `PRE_BREAKOUT_ACCUMULATION`**
+   - Ascending pivot structure (`swing_structure_hh_hl >= 1`), tight base quality, and accelerating order flow before the public breakout.
+
+### Automated Trade Execution Levels
+Each alert automatically outputs calculated risk/reward parameters based on volatility ($\text{ATR}_{14}$):
+* **Entry**: Current 5m candle close.
+* **Stop Loss**: Dynamic floor ($1.5 \times \text{ATR}$, approx $-5.5\%$).
+* **Target 1 (Scalp / Breakeven)**: $+8\%$ to $+10\%$ (trails stop loss to entry price).
+* **Target 2 (Continuation MFE)**: $+15\%$ (the Phase 1 continuation target).
+* **Target 3 (Moonbag Runner)**: $+25\%$ to $+35\%$.
+* **Risk / Reward**: Minimum $1 : 2.5$ to $1 : 3.0$.
+
+### Multi-Channel Alerting
+* **Console Dashboard**: Formatted color-coded Rich cards and live active position tracking.
+* **JSONL Audit Log**: `data/scanner_alerts.jsonl`.
+* **Optional Webhooks**: Supports Telegram bots (`TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`) and Discord channels (`DISCORD_WEBHOOK_URL`).

@@ -1,14 +1,18 @@
-version: '3.8'
-
 services:
   mexc-scanner:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: mexc-momentum-scanner
     restart: unless-stopped
     env_file:
       - .env
     volumes:
+      # Persist SQLite market cache, processed datasets, and scanner alerts across restarts
       - ./data:/app/data
-      - ./logs:/app/logs
-      - ./exports:/app/exports
-      - ./config.yaml:/app/config.yaml
+      - ./reports:/app/reports
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"

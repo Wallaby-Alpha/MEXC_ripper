@@ -13,10 +13,16 @@ venv/
 .venv/
 env/
 
-# Data, Logs & Exports (prevent committing local DB or logs)
+# Data, Databases, Logs & Exports (prevent committing local DB or logs)
 data/*.db
 data/*.db-wal
 data/*.db-shm
+data/raw/*.sqlite*
+data/processed/*.csv
+data/processed/*.parquet
+data/scanner_alerts.jsonl
+*.sqlite
+*.sqlite3
 logs/*.log
 exports/*.csv
 
