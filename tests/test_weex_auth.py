@@ -70,3 +70,67 @@ def test_paper_executor():
     )
     assert res["status"] == "FILLED_SIMULATED"
     assert "DOTUSDT" in paper.get_open_positions()
+
+
+def test_weex_native_tpsl_placement(monkeypatch):
+    """Test that live execution places entry AND native exchange-level TP and SL plan orders."""
+    client = WeexClient(api_key="k", api_secret="s", passphrase="p")
+
+    calls = []
+
+    def mock_place_order(symbol, side, order_type="market", size=1.0, **kwargs):
+        calls.append({"type": "order", "symbol": symbol, "side": side, "size": size, **kwargs})
+        return {"code": "00000", "data": {"orderId": "main_12345"}}
+
+    def mock_place_tpsl(symbol, plan_type, trigger_price, size, position_side="LONG", **kwargs):
+        calls.append({
+            "type": "tpsl",
+            "symbol": symbol,
+            "plan_type": plan_type,
+            "trigger_price": trigger_price,
+            "size": size,
+            "position_side": position_side,
+        })
+        return {"code": "00000", "data": {"orderId": f"{plan_type}_999"}}
+
+    monkeypatch.setattr(client, "place_order", mock_place_order)
+    monkeypatch.setattr(client, "place_tpsl_order", mock_place_tpsl)
+
+    executor = WeexExecutor(weex_client=client, live_enabled=True)
+    res = executor.open_position(
+        symbol="SUIUSDT",
+        side="BUY",
+        entry_price=2.00,
+        size_usdt=1000.0,
+        stop_loss=1.93,     # -3.5%
+        take_profit=2.15,   # +7.5%
+        setup_name="PRE_BREAKOUT_ACCUMULATION",
+        setup_tier="TIER 1 (ALPHA SETUP)",
+    )
+
+    assert res["status"] == "FILLED_WEEX_LIVE"
+    assert res["order_id"] == "main_12345"
+    assert res["native_tp_order_id"] == "TAKE_PROFIT_999"
+    assert res["native_sl_order_id"] == "STOP_LOSS_999"
+
+    # Verify calls
+    assert len(calls) == 3
+    assert calls[0]["type"] == "order"
+    assert calls[0]["symbol"] == "SUI_USDT"
+    assert calls[1]["type"] == "tpsl"
+    assert calls[1]["plan_type"] == "TAKE_PROFIT"
+    assert calls[1]["trigger_price"] == 2.15
+    assert calls[2]["type"] == "tpsl"
+    assert calls[2]["plan_type"] == "STOP_LOSS"
+    assert calls[2]["trigger_price"] == 1.93
+
+    # Now verify close cancels lingering TP/SL orders
+    canceled = []
+    def mock_cancel_tpsl(symbol, order_id):
+        canceled.append(order_id)
+        return {"code": "00000"}
+
+    monkeypatch.setattr(client, "cancel_tpsl_order", mock_cancel_tpsl)
+    executor.close_position("SUIUSDT", reason="TAKE_PROFIT_REACHED")
+    assert "TAKE_PROFIT_999" in canceled
+    assert "STOP_LOSS_999" in canceled

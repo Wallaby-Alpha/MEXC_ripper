@@ -108,9 +108,11 @@ class WeexClient:
         order_type: str = "market",  # 'market' or 'limit'
         size: float = 1.0,
         price: Optional[float] = None,
+        preset_take_profit_price: Optional[float] = None,
+        preset_stop_loss_price: Optional[float] = None,
         is_contract: bool = True,
     ) -> Dict[str, Any]:
-        """Place order on WEEX."""
+        """Place order on WEEX with optional preset exchange-level TP/SL."""
         payload: Dict[str, Any] = {
             "symbol": symbol,
             "side": side,
@@ -120,7 +122,54 @@ class WeexClient:
         if price is not None and order_type == "limit":
             payload["price"] = str(price)
 
+        if preset_take_profit_price is not None and preset_take_profit_price > 0:
+            payload["presetTakeProfitPrice"] = f"{preset_take_profit_price:.8f}".rstrip("0").rstrip(".")
+
+        if preset_stop_loss_price is not None and preset_stop_loss_price > 0:
+            payload["presetStopLossPrice"] = f"{preset_stop_loss_price:.8f}".rstrip("0").rstrip(".")
+
         return self._request("POST", "/api/v3/trade/order", data=payload, is_contract=is_contract)
+
+    def place_tpsl_order(
+        self,
+        symbol: str,
+        plan_type: str,  # 'TAKE_PROFIT' or 'STOP_LOSS'
+        trigger_price: float,
+        size: float,
+        position_side: str = "LONG",  # 'LONG' or 'SHORT'
+        execute_price: float = 0.0,   # 0 for market execution on trigger
+        trigger_type: str = "mark_price",
+    ) -> Dict[str, Any]:
+        """Places a native exchange-level conditional Take-Profit or Stop-Loss plan order on WEEX."""
+        payload = {
+            "symbol": symbol,
+            "planType": plan_type.upper(),
+            "triggerPrice": f"{trigger_price:.8f}".rstrip("0").rstrip("."),
+            "executePrice": "0" if execute_price == 0 else f"{execute_price:.8f}".rstrip("0").rstrip("."),
+            "quantity": f"{size:.4f}".rstrip("0").rstrip("."),
+            "positionSide": position_side.upper(),
+            "triggerType": trigger_type,
+        }
+
+        # Primary WEEX V3 contract TPSL endpoint with fallback
+        try:
+            return self._request("POST", "/capi/v3/placeTpSlOrder", data=payload, is_contract=True)
+        except Exception as exc:
+            logger.warning("Primary TPSL endpoint failed (%s), attempting fallback /api/v3/trade/order-tpsl...", exc)
+            return self._request("POST", "/api/v3/trade/order-tpsl", data=payload, is_contract=True)
+
+    def cancel_tpsl_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
+        """Cancels a native conditional TP/SL order on WEEX."""
+        payload = {"symbol": symbol, "orderId": str(order_id)}
+        try:
+            return self._request("POST", "/capi/v3/cancelTpSlOrder", data=payload, is_contract=True)
+        except Exception:
+            return self._request("POST", "/api/v3/trade/cancel-tpsl", data=payload, is_contract=True)
+
+    def get_open_tpsl_orders(self, symbol: str) -> Dict[str, Any]:
+        """Retrieves pending native exchange-level TP/SL orders for a symbol."""
+        params = {"symbol": symbol}
+        return self._request("GET", "/capi/v3/currentPlanOrder", params=params, is_contract=True)
 
     def set_leverage(self, symbol: str, leverage: int = 5, is_contract: bool = True) -> Dict[str, Any]:
         """Configure contract leverage for a trading pair."""

@@ -40,6 +40,8 @@ def parse_args():
     parser.add_argument("--iterations", type=int, default=None, help="Number of scan cycles to run (default: infinite)")
     parser.add_argument("--dry-run", action="store_true", help="Execute single scan iteration and exit")
     parser.add_argument("--no-telegram", action="store_true", help="Disable interactive Telegram bot daemon")
+    parser.add_argument("--weex-live", action="store_true", help="Enable live order execution with native TP/SL on WEEX")
+    parser.add_argument("--trade-size", type=float, default=None, help="Position size in USDT (default: $1000 or WEEX_TRADE_SIZE_USDT)")
     return parser.parse_args()
 
 
@@ -81,25 +83,30 @@ def main():
     args = parse_args()
     tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     tg_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    weex_live = os.getenv("WEEX_LIVE_TRADING_ENABLED", "false").lower() == "true"
+    weex_live = args.weex_live or (os.getenv("WEEX_LIVE_TRADING_ENABLED", "false").lower() == "true")
+    trade_size = args.trade_size or float(os.getenv("WEEX_TRADE_SIZE_USDT", "1000.0"))
 
-    exec_mode = "WEEX LIVE CAPITAL" if weex_live else "PAPER TRADING (Zero Live Capital Risk)"
+    exec_mode = "WEEX LIVE CAPITAL (Native TP/SL Enforced)" if weex_live else "PAPER TRADING (Zero Live Capital Risk)"
 
     console.print(
         Panel.fit(
             f"[bold green]MEXC Live Momentum Continuation Scanner & Execution Daemon[/bold green]\n"
             f"Interval: [yellow]{args.interval}[/yellow] | Scan Batch: [cyan]{args.top_coins} liquid alts[/cyan] | Delay: [white]{args.poll_sec}s[/white]\n"
-            f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Liquidity Floor: [magenta]${args.min_turnover:,.0f} USDT[/magenta]\n"
-            f"Execution Mode: [bold yellow]{exec_mode}[/bold yellow] | Telegram Bot: [{'bold green}ENABLED' if tg_token and not args.no_telegram else 'dim red'}DISABLED{'/bold green' if tg_token and not args.no_telegram else '/dim red'}]",
+            f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Position Size: [bold yellow]${trade_size:,.0f} USDT[/bold yellow]\n"
+            f"Execution Mode: [{'bold red blink' if weex_live else 'bold yellow'}]{exec_mode}[/{'bold red blink' if weex_live else 'bold yellow'}] | Telegram Bot: [{'bold green}ENABLED' if tg_token and not args.no_telegram else 'dim red'}DISABLED{'/bold green' if tg_token and not args.no_telegram else '/dim red'}]",
             border_style="green",
         )
     )
 
     dispatcher = AlertDispatcher()
-    paper_trader = PaperTrader()
+    paper_trader = PaperTrader(default_size_usdt=trade_size)
+    weex_executor = WeexExecutor(live_enabled=weex_live)
+
     scanner = LiveMomentumScanner(
         dispatcher=dispatcher,
         paper_trader=paper_trader,
+        executor=weex_executor,
+        trade_size_usdt=trade_size,
         interval=args.interval,
         min_24h_turnover=args.min_turnover,
         min_score=args.min_score,

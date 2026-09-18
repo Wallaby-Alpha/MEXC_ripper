@@ -30,6 +30,8 @@ class LiveMomentumScanner:
         client: Optional[MexcClient] = None,
         dispatcher: Optional[AlertDispatcher] = None,
         paper_trader: Optional[PaperTrader] = None,
+        executor: Optional[Any] = None,
+        trade_size_usdt: float = 1000.0,
         interval: str = DEFAULT_INTERVAL,
         min_24h_turnover: float = DEFAULT_MIN_24H_TURNOVER_USDT,
         min_score: float = 70.0,
@@ -37,6 +39,8 @@ class LiveMomentumScanner:
         self.client = client or MexcClient()
         self.dispatcher = dispatcher or AlertDispatcher()
         self.paper_trader = paper_trader or PaperTrader()
+        self.executor = executor
+        self.trade_size_usdt = trade_size_usdt
         self.interval = interval
         self.min_24h_turnover = min_24h_turnover
         self.min_score = min_score
@@ -86,8 +90,10 @@ class LiveMomentumScanner:
                 curr_vol = float(df["volume"].iloc[-1])
                 bar_time = int(df["open_time"].iloc[-1])
 
-                # Update any existing paper position
+                # Update any existing paper & live executor position
                 self.paper_trader.update_price(sym, curr_price, now_ms)
+                if self.executor:
+                    self.executor.update_price(sym, curr_price, now_ms)
 
                 # Cheap Pre-filter to control computational overhead
                 # Must have early volume surge (rvol_20 >= 1.5) OR 1h momentum (1h return >= 2.5%)
@@ -135,6 +141,23 @@ class LiveMomentumScanner:
                         self.seen_alerts[sym] = now_ms
                         self.dispatcher.dispatch_alert(feats, setup_name, setup_tier, score, reasons, levels)
                         self.paper_trader.open_simulated_trade(sym, curr_price, now_ms, setup_name, setup_tier, levels)
+
+                        # Live / Paper Executor with Native Exchange TP/SL
+                        if self.executor:
+                            try:
+                                self.executor.open_position(
+                                    symbol=sym,
+                                    side="BUY",
+                                    entry_price=curr_price,
+                                    size_usdt=self.trade_size_usdt,
+                                    stop_loss=levels["stop_loss"],
+                                    take_profit=levels["take_profit_2"],
+                                    setup_name=setup_name,
+                                    setup_tier=setup_tier,
+                                )
+                            except Exception as exec_err:
+                                logger.error("Executor failed for %s: %s", sym, exec_err)
+
                         alerts_triggered.append(feats)
 
             except Exception as exc:

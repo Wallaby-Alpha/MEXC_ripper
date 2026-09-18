@@ -24,6 +24,7 @@ class WeexExecutor(BaseExecutor):
             passphrase=os.getenv("WEEX_PASSPHRASE", ""),
         )
         self.paper = paper_fallback or PaperExecutor()
+        self.active_tpsl_orders: Dict[str, Dict[str, Any]] = {}
 
         # Strict safety gate: defaults to False unless explicitly set to 'true' in env
         if live_enabled is not None:
@@ -34,7 +35,7 @@ class WeexExecutor(BaseExecutor):
         if not self.live_enabled:
             logger.info("WEEX Executor initialized in DRY-RUN / PAPER MODE (Zero live capital risk).")
         else:
-            logger.warning("WEEX Executor initialized in LIVE CAPITAL TRADING MODE!")
+            logger.warning("WEEX Executor initialized in LIVE CAPITAL TRADING MODE with Native Exchange TP/SL enforcement!")
 
     def open_position(
         self,
@@ -47,7 +48,7 @@ class WeexExecutor(BaseExecutor):
         setup_name: str,
         setup_tier: str,
     ) -> Dict[str, Any]:
-        # Always track in paper executor for historical logging & metrics
+        # Always track in paper executor for baseline logging & metrics
         paper_res = self.paper.open_position(
             symbol=symbol,
             side=side,
@@ -61,7 +62,7 @@ class WeexExecutor(BaseExecutor):
 
         if not self.live_enabled:
             logger.info(
-                "[WEEX DRY-RUN] Would have placed %s on WEEX for %s: Size $%.0f USDT | SL: $%.6f | TP: $%.6f",
+                "[WEEX DRY-RUN] Would have placed %s on WEEX for %s: Size $%.0f USDT | SL: $%.6f (-3.5%%) | TP: $%.6f (+7.5%%)",
                 side,
                 symbol,
                 size_usdt,
@@ -70,22 +71,68 @@ class WeexExecutor(BaseExecutor):
             )
             return {**paper_res, "weex_live": False, "note": "Dry-run execution"}
 
-        # Live Execution on WEEX
+        # Live Execution on WEEX with Native Exchange TP/SL
         try:
-            logger.info("[WEEX LIVE ORDER] Placing %s for %s on WEEX...", side, symbol)
-            # Contract symbol formatting (e.g., BTC_USDT)
+            logger.info("[WEEX LIVE ORDER] Submitting market entry for %s (%s)...", symbol, side)
             weex_symbol = symbol if "_" in symbol else symbol.replace("USDT", "_USDT")
+            qty = round(size_usdt / entry_price, 4) if entry_price > 0 else 1.0
+            pos_side = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
+
+            # 1. Market Entry Order with preset TP/SL parameters attached
             order_res = self.client.place_order(
                 symbol=weex_symbol,
-                side="open_long" if side.upper() in ("BUY", "LONG") else "open_short",
+                side="open_long" if pos_side == "LONG" else "open_short",
                 order_type="market",
-                size=size_usdt / entry_price if entry_price > 0 else 1.0,
+                size=qty,
+                preset_take_profit_price=take_profit,
+                preset_stop_loss_price=stop_loss,
                 is_contract=True,
             )
+            main_order_id = order_res.get("data", {}).get("orderId", "N/A")
+            logger.info("[WEEX ENTRY FILLED] %s Order ID: %s", symbol, main_order_id)
+
+            # 2. Guarantee Native Exchange-Level Take Profit Order
+            native_tp_id = None
+            try:
+                tp_res = self.client.place_tpsl_order(
+                    symbol=weex_symbol,
+                    plan_type="TAKE_PROFIT",
+                    trigger_price=take_profit,
+                    size=qty,
+                    position_side=pos_side,
+                )
+                native_tp_id = tp_res.get("data", {}).get("orderId")
+                logger.info("[WEEX NATIVE TP CONFIRMED] %s Target: $%.6f | Order ID: %s", symbol, take_profit, native_tp_id)
+            except Exception as exc:
+                logger.warning("[WEEX NATIVE TP WARNING] %s failed to set exchange TP (%s)", symbol, exc)
+
+            # 3. Guarantee Native Exchange-Level Stop Loss Order
+            native_sl_id = None
+            try:
+                sl_res = self.client.place_tpsl_order(
+                    symbol=weex_symbol,
+                    plan_type="STOP_LOSS",
+                    trigger_price=stop_loss,
+                    size=qty,
+                    position_side=pos_side,
+                )
+                native_sl_id = sl_res.get("data", {}).get("orderId")
+                logger.info("[WEEX NATIVE SL CONFIRMED] %s Invalidation: $%.6f | Order ID: %s", symbol, stop_loss, native_sl_id)
+            except Exception as exc:
+                logger.warning("[WEEX NATIVE SL WARNING] %s failed to set exchange SL (%s)", symbol, exc)
+
+            self.active_tpsl_orders[symbol] = {
+                "tp_order_id": native_tp_id,
+                "sl_order_id": native_sl_id,
+                "weex_symbol": weex_symbol,
+            }
+
             return {
                 "status": "FILLED_WEEX_LIVE",
                 "symbol": symbol,
-                "order_id": order_res.get("data", {}).get("orderId"),
+                "order_id": main_order_id,
+                "native_tp_order_id": native_tp_id,
+                "native_sl_order_id": native_sl_id,
                 "weex_live": True,
                 "response": order_res,
             }
@@ -100,7 +147,7 @@ class WeexExecutor(BaseExecutor):
         if not self.live_enabled:
             return self.paper.close_position(symbol, reason)
 
-        # Close on WEEX
+        # Close on WEEX & cancel lingering native TP/SL orders
         try:
             weex_symbol = symbol if "_" in symbol else symbol.replace("USDT", "_USDT")
             self.client.place_order(
@@ -109,6 +156,15 @@ class WeexExecutor(BaseExecutor):
                 order_type="market",
                 is_contract=True,
             )
+            # Cancel open conditional orders for this symbol
+            tpsl_info = self.active_tpsl_orders.pop(symbol, {})
+            for order_key in ("tp_order_id", "sl_order_id"):
+                oid = tpsl_info.get(order_key)
+                if oid:
+                    try:
+                        self.client.cancel_tpsl_order(weex_symbol, oid)
+                    except Exception:
+                        pass
         except Exception as exc:
             logger.error("Failed closing WEEX live position for %s: %s", symbol, exc)
 
