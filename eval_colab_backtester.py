@@ -110,20 +110,36 @@ def simulate_trade_outcome(
     alert: Dict[str, Any],
     forward_df: pd.DataFrame,
     position_size_usdt: float = 1000.0,
+    tp1_pct: Optional[float] = None,
+    tp2_pct: Optional[float] = None,
+    sl_pct: Optional[float] = None,
+    partial_tp1_ratio: float = 0.5,
+    time_stop_hours: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Replays candles forward to test execution against TP1, TP2, TP3, and Stop Loss."""
-    # Extract entry & trade levels
+    """Replays candles forward with dynamic targets, partial scaling, and time stops."""
     levels = alert.get("levels", {})
     entry_price = float(levels.get("entry_price") or alert.get("entry_price") or alert.get("close", 0.0))
-    stop_loss = float(levels.get("stop_loss") or alert.get("stop_loss") or (entry_price * 0.945))
-    tp1 = float(levels.get("take_profit_1") or alert.get("take_profit_1") or (entry_price * 1.09))
-    tp2 = float(levels.get("take_profit_2") or alert.get("take_profit_2") or (entry_price * 1.15))
-    tp3 = float(levels.get("take_profit_3") or alert.get("take_profit_3") or (entry_price * 1.25))
 
     symbol = alert.get("symbol", "UNKNOWN")
     setup_name = alert.get("setup_name") or alert.get("archetype") or "MOMENTUM_EXPANSION"
     setup_tier = alert.get("setup_tier", "TIER 1")
     alert_time = alert.get("timestamp_ms") or alert.get("timestamp", 0)
+
+    # Resolve target & stop levels (custom parameters take precedence)
+    if tp1_pct is not None:
+        tp1 = entry_price * (1.0 + abs(tp1_pct))
+    else:
+        tp1 = float(levels.get("take_profit_1") or alert.get("take_profit_1") or (entry_price * 1.09))
+
+    if tp2_pct is not None:
+        tp2 = entry_price * (1.0 + abs(tp2_pct))
+    else:
+        tp2 = float(levels.get("take_profit_2") or alert.get("take_profit_2") or (entry_price * 1.15))
+
+    if sl_pct is not None:
+        stop_loss = entry_price * (1.0 - abs(sl_pct))
+    else:
+        stop_loss = float(levels.get("stop_loss") or alert.get("stop_loss") or (entry_price * 0.945))
 
     result = {
         "symbol": symbol,
@@ -133,15 +149,13 @@ def simulate_trade_outcome(
         "stop_loss": stop_loss,
         "take_profit_1": tp1,
         "take_profit_2": tp2,
-        "take_profit_3": tp3,
         "exit_price": entry_price,
-        "exit_reason": "TIMEOUT_24H",
+        "exit_reason": "TIMEOUT",
         "duration_minutes": 0,
         "peak_mfe_pct": 0.0,
         "max_drawdown_pct": 0.0,
         "tp1_reached": False,
         "tp2_reached": False,
-        "tp3_reached": False,
         "pnl_pct": 0.0,
         "pnl_usdt": 0.0,
     }
@@ -150,15 +164,26 @@ def simulate_trade_outcome(
         result["exit_reason"] = "NO_MARKET_DATA"
         return result
 
-    # Exclude the entry candle itself if included
+    # Exclude the entry candle itself
     bars = forward_df[forward_df["open_time"] > alert_time].reset_index(drop=True)
     if bars.empty:
         bars = forward_df
+
+    # Apply time-stop horizon if specified
+    if time_stop_hours is not None and time_stop_hours > 0 and alert_time > 0:
+        max_t = alert_time + int(time_stop_hours * 3600 * 1000)
+        time_filtered = bars[bars["open_time"] <= max_t].reset_index(drop=True)
+        if not time_filtered.empty:
+            bars = time_filtered
 
     highest_p = entry_price
     lowest_p = entry_price
     current_sl = stop_loss
     tp1_hit = False
+    remaining_weight = 1.0
+    realized_pnl_pct = 0.0
+
+    timeout_label = f"TIMEOUT_{int(time_stop_hours)}H" if time_stop_hours else "TIMEOUT"
 
     for idx, row in bars.iterrows():
         high = row["high"]
@@ -169,37 +194,45 @@ def simulate_trade_outcome(
         highest_p = max(highest_p, high)
         lowest_p = min(lowest_p, low)
 
-        # 1. Check Take Profit 1 (+9% / +10%) -> Trail Stop Loss to Breakeven
+        # 1. Check TP1 -> Take partial profit & move stop loss to Breakeven (+0.2% fee coverage)
         if not tp1_hit and high >= tp1:
             tp1_hit = True
             result["tp1_reached"] = True
-            current_sl = entry_price * 1.002  # Breakeven stop covering fees
+            if partial_tp1_ratio > 0:
+                realized_pnl_pct += partial_tp1_ratio * ((tp1 - entry_price) / entry_price) * 100.0
+                remaining_weight = 1.0 - partial_tp1_ratio
+            current_sl = max(current_sl, entry_price * 1.002)
 
-        # 2. Check Take Profit 2 (+15% validated MFE target) -> Full win exit
+        # 2. Check TP2 -> Full exit on remaining size
         if high >= tp2:
             result["tp2_reached"] = True
+            realized_pnl_pct += remaining_weight * ((tp2 - entry_price) / entry_price) * 100.0
+            remaining_weight = 0.0
             result["exit_price"] = tp2
-            result["exit_reason"] = "TAKE_PROFIT_2 (+15%)"
+            result["exit_reason"] = f"TAKE_PROFIT_2 (+{((tp2-entry_price)/entry_price)*100:.1f}%)"
             result["duration_minutes"] = int((bar_t - alert_time) / 60000) if alert_time > 0 else (idx + 1) * 5
             break
 
-        # 3. Check Stop Loss
+        # 3. Check Stop Loss / Breakeven Stop
         if low <= current_sl:
+            realized_pnl_pct += remaining_weight * ((current_sl - entry_price) / entry_price) * 100.0
+            remaining_weight = 0.0
             result["exit_price"] = current_sl
             result["exit_reason"] = "BREAKEVEN_STOP" if tp1_hit else "STOP_LOSS"
             result["duration_minutes"] = int((bar_t - alert_time) / 60000) if alert_time > 0 else (idx + 1) * 5
             break
     else:
-        # Reached end of forward window (24h timeout)
-        result["exit_price"] = bars["close"].iloc[-1]
-        result["exit_reason"] = "TIMEOUT_24H"
+        # Horizon expired (time stop)
+        last_close = bars["close"].iloc[-1]
+        realized_pnl_pct += remaining_weight * ((last_close - entry_price) / entry_price) * 100.0
+        result["exit_price"] = last_close
+        result["exit_reason"] = timeout_label
         result["duration_minutes"] = len(bars) * 5
 
-    # Calculate final PnL and excursions
     result["peak_mfe_pct"] = ((highest_p - entry_price) / entry_price) * 100.0
     result["max_drawdown_pct"] = ((lowest_p - entry_price) / entry_price) * 100.0
-    result["pnl_pct"] = ((result["exit_price"] - entry_price) / entry_price) * 100.0
-    result["pnl_usdt"] = position_size_usdt * (result["pnl_pct"] / 100.0)
+    result["pnl_pct"] = realized_pnl_pct
+    result["pnl_usdt"] = position_size_usdt * (realized_pnl_pct / 100.0)
 
     return result
 
@@ -212,9 +245,13 @@ def run_performance_evaluation(
     alerts: List[Dict[str, Any]],
     horizon_hours: int = 24,
     position_size_usdt: float = 1000.0,
+    tp1_pct: Optional[float] = None,
+    tp2_pct: Optional[float] = None,
+    sl_pct: Optional[float] = None,
+    partial_tp1_ratio: float = 0.5,
+    time_stop_hours: Optional[float] = None,
 ) -> pd.DataFrame:
     """Evaluates all alerts in the dataset against real MEXC market data."""
-    # Filter for alerts that actually have a symbol
     valid_alerts = [
         a for a in alerts
         if isinstance(a, dict) and (a.get("symbol") or a.get("coin")) and str(a.get("symbol", "")).upper() not in ("", "UNKNOWN")
@@ -222,17 +259,15 @@ def run_performance_evaluation(
 
     if not valid_alerts:
         print("\n❌ [ERROR] No valid alerts with trading symbols were found in the uploaded file.")
-        print("Tip: If you uploaded a Telegram chat export, make sure the bot actually dispatched signal alerts with USDT pairs.")
         return pd.DataFrame()
 
-    print(f"\n🚀 Evaluating {len(valid_alerts)} alerts against MEXC 5m klines ({horizon_hours}h forward window)...")
+    print(f"\n🚀 Evaluating {len(valid_alerts)} alerts against MEXC 5m klines...")
     records = []
 
     for i, a in enumerate(valid_alerts, 1):
         sym = str(a.get("symbol") or a.get("coin", "")).strip().upper().replace("/", "")
         t_ms = a.get("timestamp_ms")
         if not t_ms and "timestamp" in a:
-            # Parse ISO string if timestamp is string
             try:
                 dt = datetime.datetime.fromisoformat(str(a["timestamp"]).replace(" UTC", "+00:00").replace("Z", "+00:00"))
                 t_ms = int(dt.timestamp() * 1000)
@@ -247,11 +282,20 @@ def run_performance_evaluation(
         fwd_df = fetch_mexc_forward_klines(sym, start_time_ms=t_ms, horizon_hours=horizon_hours)
 
         if fwd_df.empty:
-            print("No bars found (API limit, delisted, or symbol changed).")
+            print("No bars found.")
         else:
             print(f"Loaded {len(fwd_df)} bars.", end=" ")
 
-        trade_res = simulate_trade_outcome(a, fwd_df, position_size_usdt=position_size_usdt)
+        trade_res = simulate_trade_outcome(
+            a,
+            fwd_df,
+            position_size_usdt=position_size_usdt,
+            tp1_pct=tp1_pct,
+            tp2_pct=tp2_pct,
+            sl_pct=sl_pct,
+            partial_tp1_ratio=partial_tp1_ratio,
+            time_stop_hours=time_stop_hours,
+        )
         print(f"-> {trade_res['exit_reason']} ({trade_res['pnl_pct']:+.2f}%)")
         records.append(trade_res)
 
@@ -339,6 +383,183 @@ def display_performance_dashboard(df: pd.DataFrame, position_size_usdt: float = 
         plt.legend()
         plt.tight_layout()
         plt.show()
+
+
+def run_target_comparison_study(
+    alerts: List[Dict[str, Any]],
+    position_size_usdt: float = 1000.0,
+    horizon_hours: int = 24,
+) -> pd.DataFrame:
+    """Pre-caches MEXC candlestick data once and benchmarks multiple target profiles side-by-side."""
+    valid_alerts = [
+        a for a in alerts
+        if isinstance(a, dict) and (a.get("symbol") or a.get("coin")) and str(a.get("symbol", "")).upper() not in ("", "UNKNOWN")
+    ]
+
+    if not valid_alerts:
+        print("\n❌ [ERROR] No valid alerts found to compare.")
+        return pd.DataFrame()
+
+    print(f"\n📥 Step 1/2: Pre-fetching MEXC market data once for {len(valid_alerts)} alerts...")
+    cached_klines = {}
+
+    for i, a in enumerate(valid_alerts, 1):
+        sym = str(a.get("symbol") or a.get("coin", "")).strip().upper().replace("/", "")
+        t_ms = a.get("timestamp_ms")
+        if not t_ms and "timestamp" in a:
+            try:
+                dt = datetime.datetime.fromisoformat(str(a["timestamp"]).replace(" UTC", "+00:00").replace("Z", "+00:00"))
+                t_ms = int(dt.timestamp() * 1000)
+            except Exception:
+                t_ms = None
+
+        if not t_ms or not isinstance(t_ms, (int, float)):
+            t_ms = int(time.time() * 1000) - (horizon_hours * 3600 * 1000)
+        t_ms = int(t_ms)
+
+        cache_key = (sym, t_ms)
+        if cache_key not in cached_klines:
+            print(f"[{i}/{len(valid_alerts)}] Loading {sym}...", end=" ", flush=True)
+            fwd_df = fetch_mexc_forward_klines(sym, start_time_ms=t_ms, horizon_hours=horizon_hours)
+            cached_klines[cache_key] = fwd_df
+            print(f"({len(fwd_df)} bars)")
+
+    print("\n🔬 Step 2/2: Simulating 5 target architectures across historical candles...")
+
+    profiles = [
+        {
+            "name": "1. Baseline (Original +9%/+15%, SL -5.5%, 24h)",
+            "tp1_pct": 0.09,
+            "tp2_pct": 0.15,
+            "sl_pct": 0.055,
+            "partial_tp1_ratio": 0.0,
+            "time_stop_hours": 24.0,
+            "filter_archetype": None,
+        },
+        {
+            "name": "2. MFE-Aligned Balanced (+3.5%/+7.5%, SL -3.5%, 6h)",
+            "tp1_pct": 0.035,
+            "tp2_pct": 0.075,
+            "sl_pct": 0.035,
+            "partial_tp1_ratio": 0.5,
+            "time_stop_hours": 6.0,
+            "filter_archetype": None,
+        },
+        {
+            "name": "3. Fast Scalp (+3.0%/+5.5%, SL -3.0%, 4h)",
+            "tp1_pct": 0.030,
+            "tp2_pct": 0.055,
+            "sl_pct": 0.030,
+            "partial_tp1_ratio": 0.5,
+            "time_stop_hours": 4.0,
+            "filter_archetype": None,
+        },
+        {
+            "name": "4. Trailing Runner (+4.0%/+9.0%, SL -3.5%, 8h)",
+            "tp1_pct": 0.040,
+            "tp2_pct": 0.090,
+            "sl_pct": 0.035,
+            "partial_tp1_ratio": 0.5,
+            "time_stop_hours": 8.0,
+            "filter_archetype": None,
+        },
+        {
+            "name": "5. Pre-Breakout Only (+3.5%/+7.5%, SL -3.5%, 6h)",
+            "tp1_pct": 0.035,
+            "tp2_pct": 0.075,
+            "sl_pct": 0.035,
+            "partial_tp1_ratio": 0.5,
+            "time_stop_hours": 6.0,
+            "filter_archetype": "PREBREAKOUTACCUMULATION",
+        },
+    ]
+
+    summary_rows = []
+    profile_curves = {}
+
+    for prof in profiles:
+        prof_name = prof["name"]
+        records = []
+
+        for a in valid_alerts:
+            # Check archetype filter if present
+            if prof["filter_archetype"]:
+                arch = a.get("setup_name") or a.get("archetype") or ""
+                if prof["filter_archetype"].upper() not in arch.upper():
+                    continue
+
+            sym = str(a.get("symbol") or a.get("coin", "")).strip().upper().replace("/", "")
+            t_ms = a.get("timestamp_ms", 0)
+            cache_key = (sym, t_ms)
+            fwd_df = cached_klines.get(cache_key, pd.DataFrame())
+
+            res = simulate_trade_outcome(
+                a,
+                fwd_df,
+                position_size_usdt=position_size_usdt,
+                tp1_pct=prof["tp1_pct"],
+                tp2_pct=prof["tp2_pct"],
+                sl_pct=prof["sl_pct"],
+                partial_tp1_ratio=prof["partial_tp1_ratio"],
+                time_stop_hours=prof["time_stop_hours"],
+            )
+            records.append(res)
+
+        df_prof = pd.DataFrame(records)
+        if df_prof.empty:
+            continue
+
+        valid_trades = df_prof[df_prof["exit_reason"] != "NO_MARKET_DATA"].copy()
+        total_n = len(valid_trades)
+        wins = len(valid_trades[valid_trades["pnl_usdt"] > 0])
+        losses = len(valid_trades[valid_trades["pnl_usdt"] < 0])
+        win_rate = (wins / total_n) * 100.0 if total_n > 0 else 0.0
+        total_pnl = valid_trades["pnl_usdt"].sum()
+        avg_ret = valid_trades["pnl_pct"].mean()
+        gross_w = valid_trades[valid_trades["pnl_usdt"] > 0]["pnl_usdt"].sum()
+        gross_l = abs(valid_trades[valid_trades["pnl_usdt"] < 0]["pnl_usdt"].sum())
+        pf = (gross_w / gross_l) if gross_l > 0 else (99.0 if gross_w > 0 else 1.0)
+
+        summary_rows.append({
+            "Target Profile": prof_name,
+            "Signals": total_n,
+            "Win Rate (%)": f"{win_rate:.1f}%",
+            "Profit Factor": f"{pf:.2f}",
+            "Total PnL (USDT)": f"${total_pnl:+,.2f}",
+            "Avg Return": f"{avg_ret:+.2f}%",
+            "_pnl_val": total_pnl,
+        })
+
+        valid_trades["cum_pnl"] = valid_trades["pnl_usdt"].cumsum()
+        profile_curves[prof_name] = valid_trades["cum_pnl"].tolist()
+
+    summary_df = pd.DataFrame(summary_rows)
+
+    print("\n" + "=" * 90)
+    print("🏆 TARGET OPTIMIZATION COMPARISON LEADERBOARD")
+    print("=" * 90)
+    clean_display = summary_df.drop(columns=["_pnl_val"])
+    print(clean_display.to_string(index=False))
+    print("=" * 90)
+
+    # Plot Multi-Curve Comparison
+    if HAS_MATPLOTLIB and profile_curves:
+        plt.figure(figsize=(12, 6))
+        colors = ["#e53935", "#00c853", "#00bcd4", "#ffb300", "#ab47bc"]
+        for i, (name, curve) in enumerate(profile_curves.items()):
+            color = colors[i % len(colors)]
+            plt.plot(range(1, len(curve) + 1), curve, marker="o", label=name, color=color, linewidth=2)
+
+        plt.axhline(0, color="gray", linestyle="--", alpha=0.6)
+        plt.title("Comparative Cumulative Equity Curves Across Target Presets", fontsize=13, fontweight="bold")
+        plt.xlabel("Trade Number", fontsize=11)
+        plt.ylabel("Cumulative PnL (USDT)", fontsize=11)
+        plt.grid(True, linestyle=":", alpha=0.5)
+        plt.legend(loc="upper left", fontsize=9)
+        plt.tight_layout()
+        plt.show()
+
+    return summary_df
 
 
 # ==============================================================================
