@@ -66,10 +66,10 @@ class PaperTrader:
             entry_price=entry_price,
             setup_name=setup_name,
             setup_tier=setup_tier,
-            stop_loss=trade_levels.get("stop_loss", entry_price * 0.94),
-            take_profit_1=trade_levels.get("take_profit_1", entry_price * 1.10),
-            take_profit_2=trade_levels.get("take_profit_2", entry_price * 1.15),
-            take_profit_3=trade_levels.get("take_profit_3", entry_price * 1.25),
+            stop_loss=trade_levels.get("stop_loss", entry_price * 0.965),
+            take_profit_1=trade_levels.get("take_profit_1", entry_price * 1.035),
+            take_profit_2=trade_levels.get("take_profit_2", entry_price * 1.075),
+            take_profit_3=trade_levels.get("take_profit_3", entry_price * 1.120),
             size_usdt=self.default_size_usdt,
         )
         self.open_positions[symbol] = pos
@@ -83,7 +83,7 @@ class PaperTrader:
         )
 
     def update_price(self, symbol: str, current_price: float, timestamp_ms: int):
-        """Updates open position, checks stops, trailing breakeven, and targets."""
+        """Updates open position, checks stops, trailing breakeven, targets, and 6h time stop."""
         if symbol not in self.open_positions:
             return
 
@@ -92,18 +92,23 @@ class PaperTrader:
         pos.highest_price = max(pos.highest_price, current_price)
         pos.lowest_price = min(pos.lowest_price, current_price)
 
-        # 1. If TP1 hit (+10%), move stop loss to entry price (breakeven risk-free)
+        # 1. 6-Hour Time Stop Invalidation (Kills stagnant post-pump trades)
+        if (timestamp_ms - pos.entry_time_ms) >= 6 * 3600 * 1000:
+            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TIMEOUT (6H TIME STOP)")
+            return
+
+        # 2. If TP1 hit (+3.5%), trail stop loss to Breakeven (+0.2% fee coverage)
         if not pos.tp1_hit and current_price >= pos.take_profit_1:
             pos.tp1_hit = True
             pos.stop_loss = pos.entry_price * 1.002  # Cover fee / breakeven
             logger.info("[PAPER TRADE TP1 REACHED] %s @ $%.6f | Stop trailed to Breakeven", symbol, current_price)
 
-        # 2. Check TP2 (+15% validated MFE continuation target)
+        # 3. Check TP2 (+7.5% validated MFE target)
         if current_price >= pos.take_profit_2:
-            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP2 (+15% TARGET)")
+            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP2 (+7.5% TARGET)")
             return
 
-        # 3. Check Stop Loss (or Breakeven stop)
+        # 4. Check Stop Loss (or Breakeven stop)
         if current_price <= pos.stop_loss:
             reason = "CLOSED_BE" if pos.tp1_hit else "CLOSED_SL"
             self._close_position(pos, current_price, timestamp_ms, reason)

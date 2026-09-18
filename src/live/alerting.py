@@ -50,13 +50,13 @@ class AlertDispatcher:
         cvd = candidate.get("cvd_rolling", 0.0)
         dt_str = datetime.utcfromtimestamp(candidate["timestamp_ms"] / 1000).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        stop_loss = trade_levels.get("stop_loss", price * 0.94)
-        tp1 = trade_levels.get("take_profit_1", price * 1.10)
-        tp2 = trade_levels.get("take_profit_2", price * 1.15)
-        tp3 = trade_levels.get("take_profit_3", price * 1.25)
+        stop_loss = trade_levels.get("stop_loss", price * 0.965)
+        tp1 = trade_levels.get("take_profit_1", price * 1.035)
+        tp2 = trade_levels.get("take_profit_2", price * 1.075)
+        tp3 = trade_levels.get("take_profit_3", price * 1.120)
         risk_pct = abs((stop_loss - price) / price) * 100.0
         reward_pct = ((tp2 - price) / price) * 100.0
-        rr_ratio = reward_pct / risk_pct if risk_pct > 0 else 2.5
+        rr_ratio = reward_pct / risk_pct if risk_pct > 0 else 2.1
 
         # 1. Console Rich Alert Card
         tier_color = "bold green" if "TIER 1" in setup_tier else "bold yellow"
@@ -65,13 +65,13 @@ class AlertDispatcher:
         table = Table(show_header=True, header_style="bold magenta", border_style="cyan")
         table.add_column("Parameter", style="cyan")
         table.add_column("Value", style="bold white")
-        table.add_column("Trade Execution Levels", style="bold yellow")
+        table.add_column("Trade Execution Levels (Optimized)", style="bold yellow")
 
         table.add_row("Setup Archetype", f"[{tier_color}]{setup_name}[/{tier_color}]", f"Entry Price: [bold green]${price:.6f}[/bold green]")
         table.add_row("Setup Score", f"[bold cyan]{score:.1f} / 100[/bold cyan]", f"Stop Loss: [bold red]${stop_loss:.6f}[/bold red] (-{risk_pct:.1f}%)")
-        table.add_row("RVOL (20-bar)", f"{rvol:.2f}x baseline", f"TP 1 (Scalp / BE): [green]${tp1:.6f}[/green] (+{((tp1-price)/price)*100:.1f}%)")
-        table.add_row("Order Flow CVD", f"{cvd:+,.0f} delta", f"TP 2 (Target MFE): [bold green]${tp2:.6f}[/bold green] (+{reward_pct:.1f}%)")
-        table.add_row("RSI (14)", f"{rsi:.1f}", f"TP 3 (Runner): [bold green]${tp3:.6f}[/bold green] (+{((tp3-price)/price)*100:.1f}%)")
+        table.add_row("RVOL (20-bar)", f"{rvol:.2f}x baseline", f"TP 1 (50% + BE): [green]${tp1:.6f}[/green] (+{((tp1-price)/price)*100:.1f}%)")
+        table.add_row("Order Flow CVD", f"{cvd:+,.0f} delta", f"TP 2 (Final 50%): [bold green]${tp2:.6f}[/bold green] (+{reward_pct:.1f}%)")
+        table.add_row("Max Hold Time", "[bold yellow]6 Hours Time Stop[/bold yellow]", f"TP 3 (Runner): [bold green]${tp3:.6f}[/bold green] (+{((tp3-price)/price)*100:.1f}%)")
         table.add_row("Risk / Reward", f"[bold green]1 : {rr_ratio:.1f}[/bold green]", f"MEXC URL: https://www.mexc.com/exchange/{sym}")
 
         console.print(Panel(table, title=alert_title, border_style="green", expand=False))
@@ -109,15 +109,21 @@ class AlertDispatcher:
     def _send_external_notifications(
         self, sym: str, price: float, setup: str, tier: str, score: float, reasons: List[str], levels: Dict[str, float], rr: float
     ):
+        sl = levels.get('stop_loss', price * 0.965)
+        tp1 = levels.get('take_profit_1', price * 1.035)
+        tp2 = levels.get('take_profit_2', price * 1.075)
+        tp3 = levels.get('take_profit_3', price * 1.120)
+
         text_msg = (
             f"🚀 *MEXC MOMENTUM SETUP: {sym}*\n"
-            f"*Setup*: {setup} ({tier})\n"
+            f"*Setup*: `{setup}` ({tier})\n"
             f"*Score*: {score:.0f}/100 | *R:R*: 1:{rr:.1f}\n\n"
             f"💵 *Entry*: `${price:.6f}`\n"
-            f"🛑 *Stop Loss*: `${levels.get('stop_loss', 0):.6f}`\n"
-            f"🎯 *Target 1*: `${levels.get('take_profit_1', 0):.6f}` (+10%)\n"
-            f"🎯 *Target 2*: `${levels.get('take_profit_2', 0):.6f}` (+15%)\n"
-            f"🎯 *Target 3*: `${levels.get('take_profit_3', 0):.6f}` (+25%)\n\n"
+            f"🛑 *Stop Loss*: `${sl:.6f}` (-3.5%)\n"
+            f"🎯 *Target 1*: `${tp1:.6f}` (+3.5% - Take 50% & BE Stop)\n"
+            f"🎯 *Target 2*: `${tp2:.6f}` (+7.5% - Close Remaining)\n"
+            f"🎯 *Target 3*: `${tp3:.6f}` (+12.0% - Runner)\n"
+            f"⏱ *Max Hold*: `6h Time Stop`\n\n"
             f"⚡ *Drivers*: {', '.join(reasons)}\n"
             f"🔗 [Trade on MEXC](https://www.mexc.com/exchange/{sym})"
         )

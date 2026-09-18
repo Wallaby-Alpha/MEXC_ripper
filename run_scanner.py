@@ -71,7 +71,7 @@ def display_open_positions_table(paper_trader: PaperTrader):
             f"[{color}]{ret:+.2f}%[/{color}]",
             f"+{peak:.2f}%",
             f"${pos.stop_loss:.6f}",
-            f"${pos.take_profit_2:.6f} (+15%)",
+            f"${pos.take_profit_2:.6f} (+7.5%)",
         )
 
     console.print(table)
