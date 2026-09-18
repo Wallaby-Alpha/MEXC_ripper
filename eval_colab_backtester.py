@@ -349,24 +349,82 @@ def load_alerts(source: Any = None) -> List[Dict[str, Any]]:
     return alerts
 
 
+import ast
+import re
+
 def _parse_json_or_jsonl(content: str) -> List[Dict[str, Any]]:
+    """Ultra-resilient parser supporting:
+    - Standard JSON arrays & JSON Lines
+    - Python single-quoted dicts (e.g. {'symbol': 'ENAUSDT'})
+    - Markdown code fences
+    - Concatenated or trailing-comma objects
+    """
     content = content.strip()
-    # Try parsing as JSON array
-    if content.startswith("[") and content.endswith("]"):
+    # Strip markdown code fences if present
+    content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+    content = re.sub(r"\n?```$", "", content).strip()
+
+    # 1. Try standard JSON loads
+    try:
+        data = json.loads(content)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+    except Exception:
+        pass
+
+    # 2. Try Python AST literal eval (handles single quotes: {'key': 'val'})
+    try:
+        data = ast.literal_eval(content)
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+    except Exception:
+        pass
+
+    # 3. Line by line parsing
+    alerts = []
+    for line in content.splitlines():
+        line = line.strip().rstrip(",")
+        if not line:
+            continue
+        # Try JSON
         try:
-            return json.loads(content)
+            alerts.append(json.loads(line))
+            continue
+        except Exception:
+            pass
+        # Try AST
+        try:
+            alerts.append(ast.literal_eval(line))
+            continue
+        except Exception:
+            pass
+        # Try single-to-double quote conversion
+        try:
+            fixed_line = re.sub(r"(?<=\{|,|\s)'([^']+)'\s*:", r'"\1":', line)
+            fixed_line = fixed_line.replace("True", "true").replace("False", "false").replace("None", "null")
+            alerts.append(json.loads(fixed_line))
+            continue
         except Exception:
             pass
 
-    # Try parsing as JSON Lines (one JSON per line)
-    alerts = []
-    for line in content.splitlines():
-        line = line.strip()
-        if line:
+    if alerts:
+        return alerts
+
+    # 4. Regex extraction of all {...} blocks
+    blocks = re.findall(r"\{[^{}]*\}", content)
+    for b in blocks:
+        try:
+            alerts.append(ast.literal_eval(b))
+        except Exception:
             try:
-                alerts.append(json.loads(line))
+                alerts.append(json.loads(b))
             except Exception:
                 pass
+
     return alerts
 
 
