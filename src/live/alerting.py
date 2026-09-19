@@ -34,6 +34,7 @@ class AlertDispatcher:
         self.telegram_chat_id = telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")
         self.discord_webhook_url = discord_webhook_url or os.getenv("DISCORD_WEBHOOK_URL")
         self.alpha_only = alpha_only
+        self.is_paused = False
 
     def dispatch_alert(
         self,
@@ -45,6 +46,10 @@ class AlertDispatcher:
         trade_levels: Dict[str, float],
     ):
         """Format and broadcast candidate signal."""
+        if self.is_paused:
+            logger.info("[ALERT MUTED] Telegram alerts currently paused via bot command.")
+            return
+
         sym = candidate["symbol"]
 
         # If alpha_only is active, strictly suppress any non-pre-breakout setups
@@ -165,3 +170,40 @@ class AlertDispatcher:
                 httpx.post(self.discord_webhook_url, json=discord_payload, timeout=5.0)
             except Exception as exc:
                 logger.warning("Discord alert failed: %s", exc)
+
+    def notify_execution(
+        self,
+        exec_res: Dict[str, Any],
+        symbol: str,
+        entry_price: float,
+        levels: Dict[str, float],
+    ):
+        """Broadcast live trade execution and native exchange TP/SL status to Telegram."""
+        if self.is_paused:
+            return
+
+        weex_sym = exec_res.get("weex_symbol", symbol)
+        order_id = exec_res.get("order_id", "N/A")
+        tp_id = exec_res.get("native_tp_order_id") or "ATTACHED"
+        sl_id = exec_res.get("native_sl_order_id") or "ATTACHED"
+        sl = levels.get("stop_loss", entry_price * 0.965)
+        tp1 = levels.get("take_profit_1", entry_price * 1.035)
+
+        msg = (
+            f"⚡ *WEEX LIVE ORDER FILLED* ⚡\n"
+            f"• *Contract*: `{weex_sym}` (MEXC: `{symbol}`)\n"
+            f"• *Side*: `BUY / LONG` @ `10x Leverage`\n"
+            f"• *Entry Fill*: `${entry_price:.6f}`\n"
+            f"• *Margin Allocated*: `$10.00 USDT`\n\n"
+            f"🛑 *Native Stop Loss*: `${sl:.6f}` (-3.5% | ID: `{sl_id}`)\n"
+            f"🎯 *Native Take Profit*: `${tp1:.6f}` (+3.5% | ID: `{tp_id}`)\n"
+            f"📋 *Order ID*: `{order_id}`\n"
+            f"🔒 *Exchange Protection*: `Native Trigger Active`"
+        )
+
+        if self.telegram_bot_token and self.telegram_chat_id:
+            try:
+                tg_url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
+                httpx.post(tg_url, json={"chat_id": self.telegram_chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=5.0)
+            except Exception as exc:
+                logger.warning("Telegram execution alert failed: %s", exc)

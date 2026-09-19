@@ -147,7 +147,7 @@ class LiveMomentumScanner:
                         # Live / Paper Executor with Native Exchange TP/SL
                         if self.executor:
                             try:
-                                self.executor.open_position(
+                                exec_res = self.executor.open_position(
                                     symbol=sym,
                                     side="BUY",
                                     entry_price=curr_price,
@@ -157,6 +157,8 @@ class LiveMomentumScanner:
                                     setup_name=setup_name,
                                     setup_tier=setup_tier,
                                 )
+                                if exec_res and exec_res.get("weex_live") and hasattr(self.dispatcher, "notify_execution"):
+                                    self.dispatcher.notify_execution(exec_res, sym, curr_price, levels)
                             except Exception as exec_err:
                                 logger.error("Executor failed for %s: %s", sym, exec_err)
 

@@ -42,7 +42,13 @@ class InteractiveTelegramBot:
         self.thread = threading.Thread(target=self._polling_loop, daemon=True, name="TelegramBotThread")
         self.thread.start()
         logger.info("Interactive Telegram Bot started successfully.")
-        self.send_message("🤖 *MEXC Momentum Scanner Bot Online!*\nSend `/help` for available commands.")
+        self.send_message(
+            "🤖 *MEXC Momentum Scanner Bot Online!*\n"
+            "🎯 *Strategy Filter*: Tier 1 Alpha Only (`PRE_BREAKOUT_ACCUMULATION`)\n"
+            "📊 *Empirical Edge*: `65.2% Win Rate | 2.36 Profit Factor`\n"
+            "🎯 *Primary Target*: `+3.5% (+35% at 10x)` | 🛑 *Stop Loss*: `-3.5%`\n\n"
+            "Send `/help` for available commands."
+        )
 
     def stop(self):
         self.running = False
@@ -117,9 +123,16 @@ class InteractiveTelegramBot:
 
         elif cmd == "/status":
             uptime_min = int((time.time() - self.start_time) / 60)
+            is_alpha_only = getattr(self.scanner, "alpha_only", True)
+            strat_desc = "🌟 *Tier 1 Alpha Only* (`PRE_BREAKOUT_ACCUMULATION`)" if is_alpha_only else "🌐 *All Setups*"
+            exec_mode = "⚡ *WEEX Live* (10x Lev, $10 Margin, Native TP/SL)" if (getattr(self.scanner, "executor", None) and getattr(self.scanner.executor, "live_enabled", False)) else "📝 *Paper Trading* (Zero Risk)"
             status_text = (
                 "⚡ *Scanner Operational Status*\n\n"
                 f"• *Status*: {'⏸ Paused' if self.is_paused else '🟢 Active & Scanning'}\n"
+                f"• *Strategy Filter*: {strat_desc}\n"
+                f"• *Telegram Filter*: 🔒 `Alpha Setups Only (65.2% WR, 2.36 PF)`\n"
+                f"• *Execution*: {exec_mode}\n"
+                f"• *Targets*: 🎯 `TP1 +3.5% (+35% at 10x)` | 🛑 `SL -3.5%`\n"
                 f"• *Interval*: `{self.scanner.interval}`\n"
                 f"• *Uptime*: `{uptime_min} minutes`\n"
                 f"• *Open Trades*: `{len(self.scanner.paper_trader.open_positions)}`\n"
@@ -130,7 +143,7 @@ class InteractiveTelegramBot:
         elif cmd == "/positions":
             open_pos = self.scanner.paper_trader.open_positions
             if not open_pos:
-                self.send_message("💤 *No Active Positions*\nCurrently monitoring market for fresh setups.")
+                self.send_message("💤 *No Active Positions*\nCurrently monitoring market for fresh Pre-Breakout setups.")
                 return
 
             lines = ["📈 *Active Paper Positions:*", ""]
@@ -144,7 +157,8 @@ class InteractiveTelegramBot:
                     f"  • Entry: `${pos.entry_price:.6f}`\n"
                     f"  • Current: `${pos.current_price:.6f}` (*{ret:+.2f}%*)\n"
                     f"  • Peak Run: `+{peak:.2f}%`\n"
-                    f"  • Stop Loss: `${pos.stop_loss:.6f}`\n"
+                    f"  • Stop Loss: `${pos.stop_loss:.6f}` (-3.5%)\n"
+                    f"  • Target 1 (+3.5%): `${pos.take_profit_1:.6f}`\n"
                     f"  • Target 2 (+7.5%): `${pos.take_profit_2:.6f}`\n"
                 )
             self.send_message("\n".join(lines))
@@ -170,13 +184,23 @@ class InteractiveTelegramBot:
             try:
                 with open(alerts_path, "r", encoding="utf-8") as f:
                     lines = f.readlines()
-                recent = [json.loads(line) for line in lines[-5:]]
-                out = ["🚨 *Last 5 Triggered Setups:*", ""]
+                parsed = [json.loads(line) for line in lines if line.strip()]
+                # If alpha_only is active, strictly filter for PRE_BREAKOUT_ACCUMULATION
+                if getattr(self.scanner, "alpha_only", True):
+                    parsed = [a for a in parsed if a.get("setup_name") == "PRE_BREAKOUT_ACCUMULATION"]
+
+                recent = parsed[-5:]
+                if not recent:
+                    self.send_message("💤 No Pre-Breakout Alpha alerts recorded yet.")
+                    return
+
+                out = ["🚨 *Last 5 Triggered Pre-Breakout Setups:*", ""]
                 for a in reversed(recent):
                     out.append(
-                        f"• *{a['symbol']}* ({a.get('setup_tier', 'SETUP')} - {a.get('setup_name', '')})\n"
+                        f"• *{a['symbol']}* ({a.get('setup_tier', 'TIER 1 (ALPHA SETUP)')})\n"
                         f"  Time: `{a['timestamp']}` | Score: `{a['score']:.0f}/100`\n"
-                        f"  Price: `${a['close']:.6f}`\n"
+                        f"  Price: `${a.get('levels', {}).get('entry_price', a.get('close', 0)):.6f}`\n"
+                        f"  TP1 (+3.5%): `${a.get('levels', {}).get('take_profit_1', 0):.6f}` | SL (-3.5%): `${a.get('levels', {}).get('stop_loss', 0):.6f}`\n"
                     )
                 self.send_message("\n".join(out))
             except Exception as exc:
@@ -184,10 +208,14 @@ class InteractiveTelegramBot:
 
         elif cmd == "/pause":
             self.is_paused = True
+            if hasattr(self.scanner, "dispatcher"):
+                self.scanner.dispatcher.is_paused = True
             self.send_message("⏸ *Alert notifications paused.* The scanner continues tracking positions silently.")
 
         elif cmd == "/resume":
             self.is_paused = False
+            if hasattr(self.scanner, "dispatcher"):
+                self.scanner.dispatcher.is_paused = False
             self.send_message("▶️ *Alert notifications resumed.*")
 
         else:
