@@ -82,7 +82,14 @@ class WeexClient:
         if response.status_code != 200:
             logger.error("WEEX API request error [%d]: %s", response.status_code, response.text)
             response.raise_for_status()
-        return response.json()
+
+        res_json = response.json()
+        if isinstance(res_json, dict):
+            code = res_json.get("code")
+            msg = res_json.get("msg", "")
+            if code and code != "00000":
+                logger.error("WEEX API returned error [%s]: %s (url: %s)", code, msg, url)
+        return res_json
 
     # ------------------------------------------------------------------------
     # Public & Account Endpoints
@@ -105,7 +112,7 @@ class WeexClient:
     def place_order(
         self,
         symbol: str,
-        side: str,  # 'open_long', 'open_short', 'close_long', 'close_short'
+        side: str,  # 'open_long', 'open_short', 'BUY', 'SELL'
         order_type: str = "market",  # 'market' or 'limit'
         size: float = 1.0,
         price: Optional[float] = None,
@@ -114,13 +121,27 @@ class WeexClient:
         is_contract: bool = True,
     ) -> Dict[str, Any]:
         """Place order on WEEX with optional preset exchange-level TP/SL."""
+        # Clean side and positionSide for WEEX V3 Contract API:
+        # side: "BUY" or "SELL"
+        # positionSide: "LONG" or "SHORT"
+        # type: "MARKET" or "LIMIT"
+        # quantity: str(size)
+        if "short" in str(side).lower() or "sell" in str(side).lower():
+            order_side = "SELL"
+            pos_side = "SHORT"
+        else:
+            order_side = "BUY"
+            pos_side = "LONG"
+
         payload: Dict[str, Any] = {
             "symbol": symbol,
-            "side": side.lower(),
-            "type": order_type.lower(),
-            "size": str(size),
+            "side": order_side,
+            "positionSide": pos_side,
+            "type": order_type.upper(),
+            "quantity": str(size),
+            "size": str(size),  # include both for v2/v3 compatibility
         }
-        if price is not None and order_type.lower() == "limit":
+        if price is not None and order_type.upper() == "LIMIT":
             payload["price"] = str(price)
 
         if preset_take_profit_price is not None and preset_take_profit_price > 0:
@@ -136,7 +157,8 @@ class WeexClient:
         except Exception as exc:
             if is_contract:
                 logger.warning("Primary endpoint %s failed (%s), attempting fallback /capi/v2/order/placeOrder...", endpoint, exc)
-                return self._request("POST", "/capi/v2/order/placeOrder", data=payload, is_contract=True)
+                payload_v2 = {**payload, "side": str(side).lower()}
+                return self._request("POST", "/capi/v2/order/placeOrder", data=payload_v2, is_contract=True)
             raise
 
     def place_tpsl_order(
@@ -147,7 +169,7 @@ class WeexClient:
         size: float,
         position_side: str = "LONG",  # 'LONG' or 'SHORT'
         execute_price: float = 0.0,   # 0 for market execution on trigger
-        trigger_type: str = "mark_price",
+        trigger_type: str = "MARK_PRICE",
     ) -> Dict[str, Any]:
         """Places a native exchange-level conditional Take-Profit or Stop-Loss plan order on WEEX."""
         payload = {
@@ -155,8 +177,10 @@ class WeexClient:
             "planType": plan_type.upper(),
             "triggerPrice": f"{trigger_price:.8f}".rstrip("0").rstrip("."),
             "executePrice": "0" if execute_price == 0 else f"{execute_price:.8f}".rstrip("0").rstrip("."),
-            "quantity": f"{size:.4f}".rstrip("0").rstrip("."),
+            "quantity": f"{size:.4f}".rstrip("0").rstrip(".") if size > 0 else "0",
+            "size": f"{size:.4f}".rstrip("0").rstrip(".") if size > 0 else "0",
             "positionSide": position_side.upper(),
+            "triggerPriceType": "MARK_PRICE" if "mark" in str(trigger_type).lower() else "CONTRACT_PRICE",
             "triggerType": trigger_type,
         }
 
@@ -164,8 +188,8 @@ class WeexClient:
         try:
             return self._request("POST", "/capi/v3/placeTpSlOrder", data=payload, is_contract=True)
         except Exception as exc:
-            logger.warning("Primary TPSL endpoint failed (%s), attempting fallback /api/v3/trade/order-tpsl...", exc)
-            return self._request("POST", "/api/v3/trade/order-tpsl", data=payload, is_contract=True)
+            logger.warning("Primary TPSL endpoint failed (%s), attempting fallback /capi/v3/algoOrder...", exc)
+            return self._request("POST", "/capi/v3/algoOrder", data=payload, is_contract=True)
 
     def cancel_tpsl_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
         """Cancels a native conditional TP/SL order on WEEX."""
