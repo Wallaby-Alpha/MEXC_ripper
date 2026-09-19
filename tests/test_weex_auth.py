@@ -100,7 +100,7 @@ def test_weex_native_tpsl_placement(monkeypatch):
 
     resolver = WeexSymbolResolver(auto_fetch=False)
     resolver._build_mappings([
-        {"symbol": "cmt_suiusdt", "tick_size": 4, "size_increment": 1.0, "minOrderSize": 1.0}
+        {"symbol": "SUIUSDT", "pricePrecision": 4, "quantityPrecision": 0, "minOrderSize": 1.0}
     ])
 
     executor = WeexExecutor(weex_client=client, symbol_resolver=resolver, live_enabled=True)
@@ -123,7 +123,7 @@ def test_weex_native_tpsl_placement(monkeypatch):
     # Verify calls
     assert len(calls) == 3
     assert calls[0]["type"] == "order"
-    assert calls[0]["symbol"] == "cmt_suiusdt"
+    assert calls[0]["symbol"] == "SUIUSDT"
     assert calls[1]["type"] == "tpsl"
     assert calls[1]["plan_type"] == "TAKE_PROFIT"
     assert calls[1]["trigger_price"] == 2.15
