@@ -1,5 +1,5 @@
-"""WEEX REST API Client with HMAC-SHA256 Base64 authentication (V3 Interface)."""
 import time
+import uuid
 import hmac
 import hashlib
 import base64
@@ -133,6 +133,7 @@ class WeexClient:
             order_side = "BUY"
             pos_side = "LONG"
 
+        client_oid = f"mexc_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
         payload: Dict[str, Any] = {
             "symbol": symbol,
             "side": order_side,
@@ -140,6 +141,9 @@ class WeexClient:
             "type": order_type.upper(),
             "quantity": str(size),
             "size": str(size),  # include both for v2/v3 compatibility
+            "newClientOrderId": client_oid,
+            "client_oid": client_oid,
+            "clientOid": client_oid,
         }
         if price is not None and order_type.upper() == "LIMIT":
             payload["price"] = str(price)
@@ -172,6 +176,7 @@ class WeexClient:
         trigger_type: str = "MARK_PRICE",
     ) -> Dict[str, Any]:
         """Places a native exchange-level conditional Take-Profit or Stop-Loss plan order on WEEX."""
+        tpsl_oid = f"tp_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
         payload = {
             "symbol": symbol,
             "planType": plan_type.upper(),
@@ -182,6 +187,9 @@ class WeexClient:
             "positionSide": position_side.upper(),
             "triggerPriceType": "MARK_PRICE" if "mark" in str(trigger_type).lower() else "CONTRACT_PRICE",
             "triggerType": trigger_type,
+            "clientOid": tpsl_oid,
+            "newClientOrderId": tpsl_oid,
+            "client_oid": tpsl_oid,
         }
 
         # Primary WEEX V3 contract TPSL endpoint with fallback
