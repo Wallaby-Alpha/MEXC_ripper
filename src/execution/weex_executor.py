@@ -28,6 +28,7 @@ class WeexExecutor(BaseExecutor):
         self.paper = paper_fallback or PaperExecutor()
         self.resolver = symbol_resolver or WeexSymbolResolver()
         self.active_tpsl_orders: Dict[str, Dict[str, Any]] = {}
+        self.leverage = int(os.getenv("WEEX_LEVERAGE", "10"))
 
         # Strict safety gate: defaults to False unless explicitly set to 'true' in env
         if live_enabled is not None:
@@ -38,7 +39,7 @@ class WeexExecutor(BaseExecutor):
         if not self.live_enabled:
             logger.info("WEEX Executor initialized in DRY-RUN / PAPER MODE (Zero live capital risk).")
         else:
-            logger.warning("WEEX Executor initialized in LIVE CAPITAL TRADING MODE with Native Exchange TP/SL enforcement!")
+            logger.warning("WEEX Executor initialized in LIVE CAPITAL TRADING MODE (Leverage: %dx, Margin: $10/trade) with Native Exchange TP/SL enforcement!", self.leverage)
 
     def open_position(
         self,
@@ -48,10 +49,11 @@ class WeexExecutor(BaseExecutor):
         size_usdt: float,
         stop_loss: float,
         take_profit: float,
-        setup_name: str,
-        setup_tier: str,
+        setup_name: str = "MOMENTUM_EXPANSION",
+        setup_tier: str = "TIER 2",
     ) -> Dict[str, Any]:
-        # Always track in paper executor for baseline logging & metrics
+        """Opens position on WEEX futures with 10x leverage and native exchange-level TP/SL."""
+        # 1. Update internal paper ledger regardless
         paper_res = self.paper.open_position(
             symbol=symbol,
             side=side,
@@ -63,7 +65,7 @@ class WeexExecutor(BaseExecutor):
             setup_tier=setup_tier,
         )
 
-        # Resolve MEXC symbol to canonical WEEX contract symbol (e.g. SUIUSDT -> cmt_suiusdt)
+        # Resolve MEXC symbol to canonical WEEX contract symbol (e.g. SUIUSDT)
         weex_symbol = self.resolver.resolve(symbol)
         if not weex_symbol:
             logger.warning("[WEEX SKIPPED] %s is not listed as a perpetual contract on WEEX. Software paper position logged.", symbol)
@@ -74,26 +76,38 @@ class WeexExecutor(BaseExecutor):
                 "note": f"{symbol} not listed on WEEX perpetual contracts",
             }
 
-        # Format price and size according to WEEX exchange tick size & lot increments
-        qty = float(self.resolver.format_size(weex_symbol, size_usdt / entry_price if entry_price > 0 else 1.0))
+        # Calculate position size: size_usdt is margin allocated (e.g. $10 at 10x = $100 notional)
+        notional_usdt = size_usdt * self.leverage
+        raw_qty = notional_usdt / entry_price if entry_price > 0 else 1.0
+        qty = float(self.resolver.format_size(weex_symbol, raw_qty))
         tp_price = float(self.resolver.format_price(weex_symbol, take_profit))
         sl_price = float(self.resolver.format_price(weex_symbol, stop_loss))
 
         if not self.live_enabled:
             logger.info(
-                "[WEEX DRY-RUN] Would have placed %s on WEEX for %s (%s): Qty %.4f | SL: $%.6f | TP: $%.6f",
+                "[WEEX DRY-RUN] Would have placed %s on WEEX for %s (%s): Margin $%.2f (Notional $%.2f @ %dx) | Qty %.4f | SL: $%.6f | TP: $%.6f",
                 side,
                 symbol,
                 weex_symbol,
+                size_usdt,
+                notional_usdt,
+                self.leverage,
                 qty,
                 sl_price,
                 tp_price,
             )
             return {**paper_res, "weex_live": False, "weex_symbol": weex_symbol, "note": "Dry-run execution"}
 
-        # Live Execution on WEEX with Native Exchange TP/SL
+        # Live Execution on WEEX with 10x Leverage and Native Exchange TP/SL
         try:
-            logger.info("[WEEX LIVE ORDER] Submitting market entry for %s as %s (%s)...", symbol, weex_symbol, side)
+            # 0. Enforce 10x leverage on the exchange before placing order
+            try:
+                self.client.set_leverage(symbol=weex_symbol, leverage=self.leverage)
+                logger.info("[WEEX LEVERAGE] Configured %s to %dx leverage", weex_symbol, self.leverage)
+            except Exception as lev_err:
+                logger.warning("[WEEX LEVERAGE WARNING] %s leverage set warning: %s", weex_symbol, lev_err)
+
+            logger.info("[WEEX LIVE ORDER] Submitting market entry for %s as %s (%s, Qty: %.4f, Margin: $%.2f @ %dx)...", symbol, weex_symbol, side, qty, size_usdt, self.leverage)
             pos_side = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
 
             # 1. Market Entry Order with preset TP/SL parameters attached

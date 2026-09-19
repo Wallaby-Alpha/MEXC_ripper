@@ -84,7 +84,7 @@ def main():
     tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     tg_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     weex_live = args.weex_live or (os.getenv("WEEX_LIVE_TRADING_ENABLED", "false").lower() == "true")
-    trade_size = args.trade_size or float(os.getenv("WEEX_TRADE_SIZE_USDT", "1000.0"))
+    trade_size = args.trade_size or float(os.getenv("WEEX_TRADE_SIZE_USDT", "10.0"))
 
     exec_mode = "WEEX LIVE CAPITAL (Native TP/SL Enforced)" if weex_live else "PAPER TRADING (Zero Live Capital Risk)"
 

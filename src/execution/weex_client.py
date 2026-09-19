@@ -212,10 +212,28 @@ class WeexClient:
         params = {"symbol": symbol}
         return self._request("GET", "/capi/v3/currentPlanOrder", params=params, is_contract=True)
 
-    def set_leverage(self, symbol: str, leverage: int = 5, is_contract: bool = True) -> Dict[str, Any]:
-        """Configure contract leverage for a trading pair."""
-        payload = {"symbol": symbol, "leverage": str(leverage)}
-        return self._request("POST", "/api/v3/trade/leverage", data=payload, is_contract=is_contract)
+    def set_leverage(
+        self,
+        symbol: str,
+        leverage: int = 10,
+        margin_type: str = "CROSSED",
+        is_contract: bool = True,
+    ) -> Dict[str, Any]:
+        """Configure contract leverage for a trading pair on WEEX."""
+        lev_str = str(leverage)
+        payload = {
+            "symbol": symbol.upper(),
+            "marginType": margin_type.upper(),
+            "crossLeverage": lev_str,
+            "isolatedLongLeverage": lev_str,
+            "isolatedShortLeverage": lev_str,
+            "leverage": lev_str,
+        }
+        try:
+            return self._request("POST", "/capi/v3/account/leverage", data=payload, is_contract=is_contract)
+        except Exception as exc:
+            logger.warning("Primary leverage endpoint failed (%s), attempting fallback /capi/v2/account/leverage...", exc)
+            return self._request("POST", "/capi/v2/account/leverage", data=payload, is_contract=True)
 
     def cancel_order(self, symbol: str, order_id: str, is_contract: bool = True) -> Dict[str, Any]:
         """Cancel an open order."""
