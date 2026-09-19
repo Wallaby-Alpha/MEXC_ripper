@@ -107,11 +107,12 @@ class WeexExecutor(BaseExecutor):
                 is_contract=True,
             )
             data = order_res.get("data") if isinstance(order_res.get("data"), dict) else {}
-            main_order_id = data.get("orderId") or data.get("order_id") or "N/A"
+            main_order_id = order_res.get("orderId") or order_res.get("order_id") or data.get("orderId") or data.get("order_id") or "N/A"
             code = order_res.get("code")
-            msg = order_res.get("msg", "")
+            msg = order_res.get("msg") or order_res.get("errorMessage") or ""
+            success = order_res.get("success") is True or main_order_id != "N/A" or code == "00000"
 
-            if code and code != "00000" and main_order_id == "N/A":
+            if not success and code and code != "00000":
                 logger.error("[WEEX REJECTED] %s (%s) was rejected by exchange: [%s] %s", symbol, weex_symbol, code, msg)
                 return {**paper_res, "weex_live": False, "status": "WEEX_REJECTED", "error": f"[{code}] {msg}"}
 
@@ -128,7 +129,7 @@ class WeexExecutor(BaseExecutor):
                     position_side=pos_side,
                 )
                 tp_data = tp_res.get("data") if isinstance(tp_res.get("data"), dict) else {}
-                native_tp_id = tp_data.get("orderId") or tp_data.get("order_id")
+                native_tp_id = tp_res.get("orderId") or tp_res.get("order_id") or tp_data.get("orderId") or tp_data.get("order_id")
                 logger.info("[WEEX NATIVE TP CONFIRMED] %s Target: $%.6f | Order ID: %s", weex_symbol, tp_price, native_tp_id)
             except Exception as exc:
                 logger.warning("[WEEX NATIVE TP WARNING] %s failed to set exchange TP (%s)", weex_symbol, exc)
@@ -144,7 +145,7 @@ class WeexExecutor(BaseExecutor):
                     position_side=pos_side,
                 )
                 sl_data = sl_res.get("data") if isinstance(sl_res.get("data"), dict) else {}
-                native_sl_id = sl_data.get("orderId") or sl_data.get("order_id")
+                native_sl_id = sl_res.get("orderId") or sl_res.get("order_id") or sl_data.get("orderId") or sl_data.get("order_id")
                 logger.info("[WEEX NATIVE SL CONFIRMED] %s Invalidation: $%.6f | Order ID: %s", weex_symbol, sl_price, native_sl_id)
             except Exception as exc:
                 logger.warning("[WEEX NATIVE SL WARNING] %s failed to set exchange SL (%s)", weex_symbol, exc)
