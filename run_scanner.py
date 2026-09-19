@@ -102,7 +102,7 @@ def main():
         )
     )
 
-    dispatcher = AlertDispatcher()
+    dispatcher = AlertDispatcher(alpha_only=args.alpha_only)
     paper_trader = PaperTrader(default_size_usdt=trade_size)
     weex_executor = WeexExecutor(live_enabled=weex_live)
 
