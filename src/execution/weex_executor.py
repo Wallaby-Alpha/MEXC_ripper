@@ -113,12 +113,14 @@ class WeexExecutor(BaseExecutor):
             logger.info("[WEEX LIVE ORDER] Submitting market entry for %s as %s (%s, Qty: %s, Margin: $%.2f @ %dx)...", symbol, weex_symbol, side, qty_str, size_usdt, self.leverage)
             pos_side = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
 
-            # 1. Market Entry Order (Clean V3 order without unsupported preset TP/SL params to prevent code -1191)
+            # 1. Market Entry Order with attached native TP/SL triggers (tpTriggerPrice, slTriggerPrice)
             order_res = self.client.place_order(
                 symbol=weex_symbol,
                 side="open_long" if pos_side == "LONG" else "open_short",
                 order_type="market",
                 size=qty_str,
+                tp_price=tp_price_str,
+                sl_price=sl_price_str,
                 is_contract=True,
             )
             data = order_res.get("data") if isinstance(order_res.get("data"), dict) else {}
@@ -133,7 +135,22 @@ class WeexExecutor(BaseExecutor):
 
             logger.info("[WEEX ENTRY FILLED] %s (%s) Order ID: %s", symbol, weex_symbol, main_order_id)
 
-            # 2. Guarantee Native Exchange-Level Take Profit Order via /capi/v3/placeTpSlOrder
+            # 2. Position-level TP/SL registration (/capi/v3/order/tpsl) to ensure TP/SL line displays on WEEX app UI
+            try:
+                tpsl_synced = self.client.set_position_tpsl(
+                    symbol=weex_symbol,
+                    position_side=pos_side,
+                    tp_price=tp_price_str,
+                    sl_price=sl_price_str,
+                )
+                if tpsl_synced:
+                    logger.info("[WEEX POSITION TP/SL] Successfully registered position-level TP $%s / SL $%s on /capi/v3/order/tpsl", tp_price_str, sl_price_str)
+                else:
+                    logger.debug("[WEEX POSITION TP/SL] Position TP/SL endpoint returned unconfirmed status, fallback plan orders active.")
+            except Exception as tpsl_err:
+                logger.warning("[WEEX POSITION TP/SL WARNING] %s: %s", weex_symbol, tpsl_err)
+
+            # 3. Dedicated exchange-level Take Profit Plan Order (/capi/v3/placeTpSlOrder)
             native_tp_id = None
             try:
                 tp_res = self.client.place_tpsl_order(
@@ -149,7 +166,7 @@ class WeexExecutor(BaseExecutor):
             except Exception as exc:
                 logger.warning("[WEEX NATIVE TP WARNING] %s failed to set exchange TP (%s)", weex_symbol, exc)
 
-            # 3. Guarantee Native Exchange-Level Stop Loss Order via /capi/v3/placeTpSlOrder
+            # 4. Dedicated exchange-level Stop Loss Plan Order (/capi/v3/placeTpSlOrder)
             native_sl_id = None
             try:
                 sl_res = self.client.place_tpsl_order(

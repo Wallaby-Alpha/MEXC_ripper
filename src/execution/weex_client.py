@@ -114,18 +114,18 @@ class WeexClient:
         symbol: str,
         side: str,  # 'open_long', 'open_short', 'BUY', 'SELL'
         order_type: str = "market",  # 'market' or 'limit'
-        size: float = 1.0,
+        size: Union[float, str] = 1.0,
         price: Optional[float] = None,
+        tp_price: Optional[Union[float, str]] = None,
+        sl_price: Optional[Union[float, str]] = None,
         preset_take_profit_price: Optional[float] = None,
         preset_stop_loss_price: Optional[float] = None,
         is_contract: bool = True,
     ) -> Dict[str, Any]:
-        """Place order on WEEX with optional preset exchange-level TP/SL."""
+        """Place order on WEEX V3 Contract API with optional native attached TP/SL triggers.
+        WEEX V3 requires client order IDs to have the 'b-' prefix.
+        """
         # Clean side and positionSide for WEEX V3 Contract API:
-        # side: "BUY" or "SELL"
-        # positionSide: "LONG" or "SHORT"
-        # type: "MARKET" or "LIMIT"
-        # quantity: exact string representation (e.g. "500", "10", "0.001")
         if "short" in str(side).lower() or "sell" in str(side).lower():
             order_side = "SELL"
             pos_side = "SHORT"
@@ -133,11 +133,13 @@ class WeexClient:
             order_side = "BUY"
             pos_side = "LONG"
 
-        client_oid = f"mexc_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+        client_oid = f"b-mexc-{int(time.time()*1000)}_{uuid.uuid4().hex[:4]}"
 
-        if isinstance(size, (int, float)):
-            size_str = str(int(size)) if size == int(size) else str(size)
-        else:
+        # Clean quantity representation
+        try:
+            qty_val = float(size)
+            size_str = str(int(qty_val)) if qty_val.is_integer() else str(qty_val)
+        except (ValueError, TypeError):
             size_str = str(size)
 
         payload: Dict[str, Any] = {
@@ -148,11 +150,31 @@ class WeexClient:
             "quantity": size_str,
             "newClientOrderId": client_oid,
         }
+
+        # Resolve TP/SL from either tp_price or legacy preset_take_profit_price
+        target_tp = tp_price if tp_price is not None else preset_take_profit_price
+        target_sl = sl_price if sl_price is not None else preset_stop_loss_price
+
+        if target_tp is not None:
+            try:
+                if float(target_tp) > 0:
+                    payload["tpTriggerPrice"] = str(target_tp)
+                    payload["tpWorkingType"] = "MARK_PRICE"
+            except (ValueError, TypeError):
+                pass
+
+        if target_sl is not None:
+            try:
+                if float(target_sl) > 0:
+                    payload["slTriggerPrice"] = str(target_sl)
+                    payload["slWorkingType"] = "MARK_PRICE"
+            except (ValueError, TypeError):
+                pass
+
         if price is not None and order_type.upper() == "LIMIT":
             payload["price"] = str(price)
             payload["timeInForce"] = "GTC"
 
-        # In WEEX Contract V3, the canonical endpoint is /capi/v3/order
         endpoint = "/capi/v3/order" if is_contract else "/api/v3/order"
         try:
             return self._request("POST", endpoint, data=payload, is_contract=is_contract)
@@ -162,6 +184,41 @@ class WeexClient:
                 payload_v2 = {**payload, "side": str(side).lower(), "size": size_str, "client_oid": client_oid}
                 return self._request("POST", "/capi/v2/order/placeOrder", data=payload_v2, is_contract=True)
             raise
+
+    def set_position_tpsl(
+        self,
+        symbol: str,
+        position_side: str,  # "LONG" or "SHORT"
+        tp_price: Optional[Union[float, str]] = None,
+        sl_price: Optional[Union[float, str]] = None,
+    ) -> bool:
+        """Sets or updates native position-level Take Profit / Stop Loss trigger prices on WEEX.
+        Uses /capi/v3/order/tpsl so exchange UI displays the active TP/SL lines.
+        """
+        payload = {
+            "symbol": symbol,
+            "holdSide": position_side.upper(),
+            "positionSide": position_side.upper(),
+            "planType": "PROFIT_LOSS",
+            "workingType": "MARK_PRICE",
+            "triggerType": "MARK_PRICE",
+        }
+        if tp_price is not None and float(tp_price) > 0:
+            payload["takeProfitPrice"] = str(tp_price)
+            payload["tpTriggerPrice"] = str(tp_price)
+        if sl_price is not None and float(sl_price) > 0:
+            payload["stopLossPrice"] = str(sl_price)
+            payload["slTriggerPrice"] = str(sl_price)
+
+        try:
+            res = self._request("POST", "/capi/v3/order/tpsl", data=payload, is_contract=True)
+            if isinstance(res, dict):
+                code = str(res.get("code", ""))
+                return code in ("0", "00000", "200") or res.get("success", False)
+            return False
+        except Exception as exc:
+            logger.warning("Failed to update position TP/SL on /capi/v3/order/tpsl: %s", exc)
+            return False
 
     def place_tpsl_order(
         self,
@@ -174,11 +231,12 @@ class WeexClient:
         trigger_type: str = "CONTRACT_PRICE",
     ) -> Dict[str, Any]:
         """Places a native exchange-level conditional Take-Profit or Stop-Loss plan order on WEEX."""
-        tpsl_oid = f"tp_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+        tpsl_oid = f"b-tp-{int(time.time()*1000)}_{uuid.uuid4().hex[:4]}"
 
-        if isinstance(size, (int, float)):
-            qty_str = str(int(size)) if size == int(size) else str(size)
-        else:
+        try:
+            qty_val = float(size)
+            qty_str = str(int(qty_val)) if qty_val.is_integer() else str(qty_val)
+        except (ValueError, TypeError):
             qty_str = str(size)
 
         if isinstance(trigger_price, (int, float)):
@@ -231,10 +289,9 @@ class WeexClient:
         lev_str = str(leverage)
         payload = {
             "symbol": symbol.upper(),
-            "marginType": margin_type.upper(),
-            "crossLeverage": lev_str,
             "isolatedLongLeverage": lev_str,
             "isolatedShortLeverage": lev_str,
+            "crossLeverage": lev_str,
         }
         try:
             return self._request("POST", "/capi/v3/account/leverage", data=payload, is_contract=is_contract)
