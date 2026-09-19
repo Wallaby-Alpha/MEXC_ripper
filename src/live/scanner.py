@@ -35,6 +35,7 @@ class LiveMomentumScanner:
         interval: str = DEFAULT_INTERVAL,
         min_24h_turnover: float = DEFAULT_MIN_24H_TURNOVER_USDT,
         min_score: float = 70.0,
+        alpha_only: bool = True,
     ):
         self.client = client or MexcClient()
         self.dispatcher = dispatcher or AlertDispatcher()
@@ -44,6 +45,7 @@ class LiveMomentumScanner:
         self.interval = interval
         self.min_24h_turnover = min_24h_turnover
         self.min_score = min_score
+        self.alpha_only = alpha_only
         self.seen_alerts: Dict[str, int] = {}  # Cooldown tracker (ms)
 
     def poll_cycle(self, max_symbols: int = 50) -> List[Dict[str, Any]]:
@@ -151,7 +153,7 @@ class LiveMomentumScanner:
                                     entry_price=curr_price,
                                     size_usdt=self.trade_size_usdt,
                                     stop_loss=levels["stop_loss"],
-                                    take_profit=levels["take_profit_2"],
+                                    take_profit=levels["take_profit_1"],
                                     setup_name=setup_name,
                                     setup_tier=setup_tier,
                                 )
@@ -201,28 +203,32 @@ class LiveMomentumScanner:
             return False, "", "", 0.0, [], {}  # Price pumped on net seller delta
 
         # Setup Classification - Empirically Calibrated (PF 2.36 on Pre-Breakout)
-        setup_name = "MOMENTUM_EXPANSION"
-        setup_tier = "TIER 2"
+        is_alpha = (hh_hl >= 1.0) and (feats.get("pre_breakout_base_quality", 0) >= 0.55)
 
-        if hh_hl >= 1.0 and feats.get("pre_breakout_base_quality", 0) >= 0.55:
+        if is_alpha:
             # Alpha Archetype: 65.2% Win Rate, 2.36 Profit Factor in live testing
             setup_name = "PRE_BREAKOUT_ACCUMULATION"
             setup_tier = "TIER 1 (ALPHA SETUP)"
             score += 45.0
-            reasons.append("Ascending swing pivots with tight accumulation base (Alpha setup)")
-        elif breakout and rvol >= 1.8 and rsi <= 72.0:
+            reasons.append("Ascending swing pivots with tight accumulation base (Alpha setup: 65.2% WR, 2.36 PF)")
+        elif not self.alpha_only and breakout and rvol >= 1.8 and rsi <= 72.0:
             setup_name = "PURE_BREAKOUT_CONTINUATION"
             setup_tier = "TIER 1"
             score += 38.0
             reasons.append("Clean 20-bar breakout confirmed with healthy RSI")
-        elif retest and cvd > 0:
-            # Retests require positive CVD to prevent trap breakdown dumps
+        elif not self.alpha_only and retest and cvd > 0:
             setup_name = "RETEST_HOLD_SPRINGBOARD"
             setup_tier = "TIER 2"
             score += 30.0
             reasons.append("Prior resistance retested as support with positive delta")
         else:
+            setup_name = "MOMENTUM_EXPANSION"
+            setup_tier = "TIER 2"
             score += 15.0
+
+        # When alpha_only is active, strictly reject any non-pre-breakout setup
+        if self.alpha_only and setup_name != "PRE_BREAKOUT_ACCUMULATION":
+            return False, setup_name, setup_tier, score, reasons, {}
 
         # Volume & CVD Boosts
         if 1.5 <= rvol <= 4.5:
@@ -249,13 +255,13 @@ class LiveMomentumScanner:
             score += 5.0
             reasons.append(f"Alpha vs BTC (+{rs_btc_1h*100:.1f}%)")
 
-        # Empirically Calibrated Targets (+3.5% TP1, +7.5% TP2, -3.5% SL)
-        # Average peak runner is +4.56%; TP1 takes 50% & moves SL to breakeven
+        # Empirically Calibrated Targets for Alpha Setup (+3.5% TP1, +7.5% TP2, -3.5% SL)
+        # Average peak runner is +4.56%; +3.5% captures the primary impulse with 65.2% win rate
         stop_dist = min(atr * 1.5, curr_price * 0.035)
         stop_loss = curr_price - stop_dist
-        tp1 = curr_price + max(atr * 1.2, curr_price * 0.035)  # +3.5% Take 50% & Trail SL to Breakeven
-        tp2 = curr_price + max(atr * 2.2, curr_price * 0.075)  # +7.5% Full win exit
-        tp3 = curr_price + max(atr * 3.5, curr_price * 0.120)  # +12.0% Runner
+        tp1 = curr_price + min(atr * 1.5, curr_price * 0.035)  # +3.5% Primary Alpha Target
+        tp2 = curr_price + max(atr * 2.2, curr_price * 0.075)  # +7.5% Runner Target
+        tp3 = curr_price + max(atr * 3.5, curr_price * 0.120)  # +12.0% Moonbag Target
 
         levels = {
             "entry_price": curr_price,
@@ -265,7 +271,7 @@ class LiveMomentumScanner:
             "take_profit_3": tp3,
         }
 
-        is_valid = score >= 65.0
+        is_valid = score >= self.min_score
         return is_valid, setup_name, setup_tier, score, reasons, levels
 
     def _bars_to_df(self, bars: List[List[Any]]) -> pd.DataFrame:

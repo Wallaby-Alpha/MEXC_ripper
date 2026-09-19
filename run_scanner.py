@@ -41,6 +41,8 @@ def parse_args():
     parser.add_argument("--dry-run", action="store_true", help="Execute single scan iteration and exit")
     parser.add_argument("--no-telegram", action="store_true", help="Disable interactive Telegram bot daemon")
     parser.add_argument("--weex-live", action="store_true", help="Enable live order execution with native TP/SL on WEEX")
+    parser.add_argument("--alpha-only", action="store_true", default=True, help="Strictly filter for Tier 1 Pre-Breakout Accumulation setups (PF 2.36, 65.2% Win Rate)")
+    parser.add_argument("--all-setups", dest="alpha_only", action="store_false", help="Allow secondary breakout chase setups")
     parser.add_argument("--trade-size", type=float, default=None, help="Position size in USDT (default: $1000 or WEEX_TRADE_SIZE_USDT)")
     return parser.parse_args()
 
@@ -58,7 +60,7 @@ def display_open_positions_table(paper_trader: PaperTrader):
     table.add_column("Unrealized PnL", justify="right")
     table.add_column("Peak Run (MFE)", justify="right", style="bold green")
     table.add_column("Stop Loss", justify="right", style="bold red")
-    table.add_column("Target (TP2)", justify="right", style="bold yellow")
+    table.add_column("Target (TP1)", justify="right", style="bold green")
 
     for sym, pos in paper_trader.open_positions.items():
         ret = ((pos.current_price - pos.entry_price) / pos.entry_price) * 100.0
@@ -73,7 +75,7 @@ def display_open_positions_table(paper_trader: PaperTrader):
             f"[{color}]{ret:+.2f}%[/{color}]",
             f"+{peak:.2f}%",
             f"${pos.stop_loss:.6f}",
-            f"${pos.take_profit_2:.6f} (+7.5%)",
+            f"${pos.take_profit_1:.6f} (+3.5%)",
         )
 
     console.print(table)
@@ -87,11 +89,13 @@ def main():
     trade_size = args.trade_size or float(os.getenv("WEEX_TRADE_SIZE_USDT", "10.0"))
 
     exec_mode = "WEEX LIVE CAPITAL (Native TP/SL Enforced)" if weex_live else "PAPER TRADING (Zero Live Capital Risk)"
+    strategy_mode = "TIER 1 ALPHA ONLY (PRE_BREAKOUT_ACCUMULATION | PF 2.36, 65.2% Win Rate)" if args.alpha_only else "ALL SETUPS"
 
     console.print(
         Panel.fit(
             f"[bold green]MEXC Live Momentum Continuation Scanner & Execution Daemon[/bold green]\n"
             f"Interval: [yellow]{args.interval}[/yellow] | Scan Batch: [cyan]{args.top_coins} liquid alts[/cyan] | Delay: [white]{args.poll_sec}s[/white]\n"
+            f"Strategy Filter: [bold green]{strategy_mode}[/bold green]\n"
             f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Position Size: [bold yellow]${trade_size:,.0f} USDT[/bold yellow]\n"
             f"Execution Mode: [{'bold red blink' if weex_live else 'bold yellow'}]{exec_mode}[/{'bold red blink' if weex_live else 'bold yellow'}] | Telegram Bot: [{'bold green}ENABLED' if tg_token and not args.no_telegram else 'dim red'}DISABLED{'/bold green' if tg_token and not args.no_telegram else '/dim red'}]",
             border_style="green",
@@ -110,6 +114,7 @@ def main():
         interval=args.interval,
         min_24h_turnover=args.min_turnover,
         min_score=args.min_score,
+        alpha_only=args.alpha_only,
     )
 
     # Initialize interactive Telegram Bot if credentials are configured
