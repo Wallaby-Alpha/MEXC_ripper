@@ -158,7 +158,7 @@ class LiveMomentumScanner:
                                     setup_tier=setup_tier,
                                 )
                                 if exec_res and hasattr(self.dispatcher, "notify_execution") and getattr(self.executor, "live_enabled", False):
-                                    self.dispatcher.notify_execution(exec_res, sym, curr_price, levels, margin_usdt=self.trade_size_usdt)
+                                    self.dispatcher.notify_execution(exec_res, sym, curr_price, levels, margin_usdt=exec_res.get("size_usdt", self.trade_size_usdt))
                             except Exception as exec_err:
                                 logger.error("Executor failed for %s: %s", sym, exec_err)
 

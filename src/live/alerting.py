@@ -189,9 +189,9 @@ class AlertDispatcher:
         sl = levels.get("stop_loss", entry_price * 0.965)
         tp1 = levels.get("take_profit_1", entry_price * 1.035)
 
-        margin = margin_usdt or exec_res.get("size_usdt", 1.0)
+        margin = exec_res.get("size_usdt") or margin_usdt or 1.0
         leverage = exec_res.get("leverage", 10)
-        notional = margin * leverage
+        notional = exec_res.get("notional_usdt") or (margin * leverage)
         expected_pnl = margin * 0.35  # +35% return on margin at +3.5% price target
 
         # 1. Genuine Exchange Fill Confirmation
@@ -207,7 +207,19 @@ class AlertDispatcher:
                 f"📋 *Exchange Order ID*: `{order_id}`\n"
                 f"🔒 *Exchange Protection*: `Native TP/SL Attached`"
             )
-        # 2. Exchange Rejection or Order Failure
+        # 2. Exchange Minimum Lot Size Exceeds Budget (Collar Protection)
+        elif status == "SKIPPED_MIN_ORDER_EXCEEDS_BUDGET":
+            req_margin = exec_res.get("required_margin", margin)
+            target_m = exec_res.get("target_margin", 1.0)
+            msg = (
+                f"🛡️ *WEEX ORDER SKIPPED (BUDGET PROTECTION)* 🛡️\n"
+                f"• *Contract*: `{weex_sym}` (MEXC: `{symbol}`)\n"
+                f"• *Reason*: Exchange min order size exceeds your margin budget.\n"
+                f"• *Required Margin*: `${req_margin:.2f} USDT` (`${notional:.2f}` Notional)\n"
+                f"• *Target Margin Budget*: `${target_m:.2f} USDT`\n\n"
+                f"🔒 *Capital Guard Active*: Setup logged to paper tracking without deploying real capital."
+            )
+        # 3. Exchange Rejection or Order Failure
         elif status in ("WEEX_REJECTED", "FAILED") or exec_res.get("error"):
             err_msg = exec_res.get("error", "Unknown exchange error")
             msg = (
@@ -218,7 +230,7 @@ class AlertDispatcher:
                 f"• *Exchange Response*: `{err_msg}`\n\n"
                 f"ℹ️ *No live capital was deployed.* Setup logged to paper tracking only."
             )
-        # 3. Paper / Dry-Run Mode
+        # 4. Paper / Dry-Run Mode
         else:
             msg = (
                 f"📝 *PAPER POSITION OPENED (Simulated)*\n"

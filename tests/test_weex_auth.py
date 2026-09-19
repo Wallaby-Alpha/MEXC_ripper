@@ -135,3 +135,37 @@ def test_weex_native_tpsl_placement(monkeypatch):
     assert calls[1]["symbol"] == "SUIUSDT"
     assert calls[1]["tp_price"] == "2.1500"
     assert calls[1]["sl_price"] == "1.9300"
+
+
+def test_weex_budget_collar_protection(monkeypatch):
+    """Test that when exchange minOrderSize requires excessive margin (e.g. ZEC), the safety collar aborts execution."""
+    client = WeexClient(api_key="k", api_secret="s", passphrase="p")
+    calls = []
+
+    def mock_place_order(symbol, side, **kwargs):
+        calls.append({"type": "order", "symbol": symbol, **kwargs})
+        return {"code": "00000", "data": {"orderId": "should_not_happen"}}
+
+    monkeypatch.setattr(client, "place_order", mock_place_order)
+
+    resolver = WeexSymbolResolver(auto_fetch=False)
+    resolver._build_mappings([
+        {"symbol": "ZECUSDT", "pricePrecision": 2, "quantityPrecision": 1, "minOrderSize": 0.1, "contractVal": 0.1}
+    ])
+
+    executor = WeexExecutor(weex_client=client, symbol_resolver=resolver, live_enabled=True)
+    # User requested $1.00 margin at 10x ($10 notional), but ZEC min order 0.1 at $1477.50 requires $14.78 margin!
+    res = executor.open_position(
+        symbol="ZECUSDT",
+        side="BUY",
+        entry_price=1477.50,
+        size_usdt=1.0,
+        stop_loss=1425.0,
+        take_profit=1530.0,
+    )
+
+    assert res["status"] == "SKIPPED_MIN_ORDER_EXCEEDS_BUDGET"
+    assert res["weex_live"] is False
+    assert res["required_margin"] > 14.0
+    assert len(calls) == 0  # Zero live orders were sent to the exchange
+

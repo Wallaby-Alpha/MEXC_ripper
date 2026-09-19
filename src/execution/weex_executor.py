@@ -86,20 +86,56 @@ class WeexExecutor(BaseExecutor):
         tp_price = float(tp_price_str)
         sl_price = float(sl_price_str)
 
+        # Capital Budget Protection Collar:
+        # If exchange minOrderSize forces an order that exceeds margin budget by >30%, abort live execution!
+        actual_notional = qty * entry_price
+        actual_margin = actual_notional / self.leverage if self.leverage > 0 else actual_notional
+        max_allowed_margin = size_usdt * float(os.getenv("WEEX_MAX_MARGIN_MULTIPLIER", "1.30"))
+
+        if actual_margin > max_allowed_margin:
+            logger.warning(
+                "[WEEX SKIPPED: MIN_ORDER_EXCEEDS_BUDGET] %s (%s) min order %s requires $%.2f margin ($%.2f notional), exceeding target margin $%.2f (collar limit: $%.2f). Live order aborted.",
+                symbol,
+                weex_symbol,
+                qty_str,
+                actual_margin,
+                actual_notional,
+                size_usdt,
+                max_allowed_margin,
+            )
+            return {
+                **paper_res,
+                "weex_live": False,
+                "status": "SKIPPED_MIN_ORDER_EXCEEDS_BUDGET",
+                "symbol": symbol,
+                "weex_symbol": weex_symbol,
+                "required_margin": actual_margin,
+                "target_margin": size_usdt,
+                "notional_usdt": actual_notional,
+                "note": f"Min order {qty_str} requires ${actual_margin:.2f} margin (budget: ${size_usdt:.2f})",
+            }
+
         if not self.live_enabled:
             logger.info(
                 "[WEEX DRY-RUN] Would have placed %s on WEEX for %s (%s): Margin $%.2f (Notional $%.2f @ %dx) | Qty %s | SL: $%s | TP: $%s",
                 side,
                 symbol,
                 weex_symbol,
-                size_usdt,
-                notional_usdt,
+                actual_margin,
+                actual_notional,
                 self.leverage,
                 qty_str,
                 sl_price_str,
                 tp_price_str,
             )
-            return {**paper_res, "weex_live": False, "weex_symbol": weex_symbol, "note": "Dry-run execution"}
+            return {
+                **paper_res,
+                "weex_live": False,
+                "weex_symbol": weex_symbol,
+                "size_usdt": actual_margin,
+                "notional_usdt": actual_notional,
+                "note": "Dry-run execution",
+            }
 
         # Live Execution on WEEX with 10x Leverage and Native Exchange TP/SL
         try:
@@ -110,7 +146,7 @@ class WeexExecutor(BaseExecutor):
             except Exception as lev_err:
                 logger.warning("[WEEX LEVERAGE WARNING] %s leverage set warning: %s", weex_symbol, lev_err)
 
-            logger.info("[WEEX LIVE ORDER] Submitting market entry for %s as %s (%s, Qty: %s, Margin: $%.2f @ %dx)...", symbol, weex_symbol, side, qty_str, size_usdt, self.leverage)
+            logger.info("[WEEX LIVE ORDER] Submitting market entry for %s as %s (%s, Qty: %s, Margin: $%.2f @ %dx)...", symbol, weex_symbol, side, qty_str, actual_margin, self.leverage)
             pos_side = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
 
             # 1. Market Entry Order with attached native TP/SL triggers (tpTriggerPrice, slTriggerPrice)
@@ -147,7 +183,8 @@ class WeexExecutor(BaseExecutor):
                     **paper_res,
                     "weex_live": False,
                     "status": "WEEX_REJECTED",
-                    "size_usdt": size_usdt,
+                    "size_usdt": actual_margin,
+                    "notional_usdt": actual_notional,
                     "leverage": self.leverage,
                     "error": err_msg,
                     "raw": order_res,
@@ -163,7 +200,8 @@ class WeexExecutor(BaseExecutor):
                 "native_tp_order_id": "ATTACHED_ON_ENTRY",
                 "native_sl_order_id": "ATTACHED_ON_ENTRY",
                 "weex_live": True,
-                "size_usdt": size_usdt,
+                "size_usdt": actual_margin,
+                "notional_usdt": actual_notional,
                 "leverage": self.leverage,
                 "response": order_res,
             }
