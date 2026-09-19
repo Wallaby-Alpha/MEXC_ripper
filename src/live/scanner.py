@@ -157,7 +157,7 @@ class LiveMomentumScanner:
                                     setup_name=setup_name,
                                     setup_tier=setup_tier,
                                 )
-                                if exec_res and exec_res.get("weex_live") and hasattr(self.dispatcher, "notify_execution"):
+                                if exec_res and hasattr(self.dispatcher, "notify_execution") and getattr(self.executor, "live_enabled", False):
                                     self.dispatcher.notify_execution(exec_res, sym, curr_price, levels)
                             except Exception as exec_err:
                                 logger.error("Executor failed for %s: %s", sym, exec_err)

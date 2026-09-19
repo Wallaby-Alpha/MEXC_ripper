@@ -116,19 +116,31 @@ def test_alert_dispatcher_alpha_only_filter(tmp_path, monkeypatch):
     )
     assert len(sent_messages) == 1  # Still 1, muted when paused
 
-    # 4. Test live execution notification
+    # 4. Test live execution notification (Success)
     dispatcher.is_paused = False
-    exec_res = {
+    exec_res_success = {
+        "status": "FILLED_WEEX_LIVE",
         "weex_live": True,
         "weex_symbol": "DOGE_USDT",
         "order_id": "998877",
-        "native_tp_order_id": "tp123",
-        "native_sl_order_id": "sl123",
     }
-    dispatcher.notify_execution(exec_res, "DOGEUSDT", 0.15, levels)
+    dispatcher.notify_execution(exec_res_success, "DOGEUSDT", 0.15, levels)
     assert len(sent_messages) == 2
     assert "WEEX LIVE ORDER FILLED" in sent_messages[1]["text"]
     assert "DOGE_USDT" in sent_messages[1]["text"]
+    assert "998877" in sent_messages[1]["text"]
+
+    # 5. Test live execution notification (Rejected/Failed)
+    exec_res_fail = {
+        "status": "WEEX_REJECTED",
+        "weex_live": False,
+        "weex_symbol": "AEROUSDT",
+        "error": "[-2019] Margin is insufficient.",
+    }
+    dispatcher.notify_execution(exec_res_fail, "AEROUSDT", 0.6629, levels)
+    assert len(sent_messages) == 3
+    assert "WEEX LIVE ORDER NOT PLACED" in sent_messages[2]["text"]
+    assert "[-2019] Margin is insufficient." in sent_messages[2]["text"]
 
 
 def test_interactive_telegram_bot_commands(tmp_path):

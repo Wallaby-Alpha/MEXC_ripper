@@ -123,84 +123,66 @@ class WeexExecutor(BaseExecutor):
                 sl_price=sl_price_str,
                 is_contract=True,
             )
-            data = order_res.get("data") if isinstance(order_res.get("data"), dict) else {}
-            main_order_id = order_res.get("orderId") or order_res.get("order_id") or data.get("orderId") or data.get("order_id") or "N/A"
-            code = order_res.get("code")
-            msg = order_res.get("msg") or order_res.get("errorMessage") or ""
-            success = order_res.get("success") is True or (main_order_id != "N/A" and main_order_id is not None) or code == "00000"
+            data = order_res.get("data", order_res) if isinstance(order_res, dict) else {}
+            main_order_id = ""
+            if isinstance(data, dict) and data.get("orderId"):
+                main_order_id = str(data["orderId"])
+            elif isinstance(order_res, dict) and order_res.get("orderId"):
+                main_order_id = str(order_res["orderId"])
 
-            if not success and code and code != "00000":
-                logger.error("[WEEX REJECTED] %s (%s) was rejected by exchange: [%s] %s", symbol, weex_symbol, code, msg)
-                return {**paper_res, "weex_live": False, "status": "WEEX_REJECTED", "error": f"[{code}] {msg}"}
+            code = str(order_res.get("code", "")) if isinstance(order_res, dict) else ""
+            msg = order_res.get("msg") or order_res.get("errorMessage") or ""
+
+            success = (
+                (code in ("0", "00000", "200") and bool(main_order_id))
+                or (isinstance(data, dict) and data.get("success", False) and bool(main_order_id))
+                or (bool(main_order_id) and main_order_id != "N/A")
+            )
+
+            if not success or not main_order_id or main_order_id == "N/A":
+                err_code = code or "REJECTED"
+                err_msg = f"[{err_code}] {msg}" if msg else f"WEEX rejected order (code: {err_code})"
+                logger.error("[WEEX REJECTED] %s (%s): %s", symbol, weex_symbol, err_msg)
+                return {
+                    **paper_res,
+                    "weex_live": False,
+                    "status": "WEEX_REJECTED",
+                    "error": err_msg,
+                    "raw": order_res,
+                }
 
             logger.info("[WEEX ENTRY FILLED] %s (%s) Order ID: %s", symbol, weex_symbol, main_order_id)
 
-            # 2. Position-level TP/SL registration (/capi/v3/order/tpsl) to ensure TP/SL line displays on WEEX app UI
+            # Optional position-level UI synchronization (/capi/v3/order/tpsl)
             try:
-                tpsl_synced = self.client.set_position_tpsl(
+                self.client.set_position_tpsl(
                     symbol=weex_symbol,
                     position_side=pos_side,
                     tp_price=tp_price_str,
                     sl_price=sl_price_str,
                 )
-                if tpsl_synced:
-                    logger.info("[WEEX POSITION TP/SL] Successfully registered position-level TP $%s / SL $%s on /capi/v3/order/tpsl", tp_price_str, sl_price_str)
-                else:
-                    logger.debug("[WEEX POSITION TP/SL] Position TP/SL endpoint returned unconfirmed status, fallback plan orders active.")
             except Exception as tpsl_err:
-                logger.warning("[WEEX POSITION TP/SL WARNING] %s: %s", weex_symbol, tpsl_err)
-
-            # 3. Dedicated exchange-level Take Profit Plan Order (/capi/v3/placeTpSlOrder)
-            native_tp_id = None
-            try:
-                tp_res = self.client.place_tpsl_order(
-                    symbol=weex_symbol,
-                    plan_type="TAKE_PROFIT",
-                    trigger_price=tp_price_str,
-                    size=qty_str,
-                    position_side=pos_side,
-                )
-                tp_data = tp_res.get("data") if isinstance(tp_res.get("data"), dict) else {}
-                native_tp_id = tp_res.get("orderId") or tp_res.get("order_id") or tp_data.get("orderId") or tp_data.get("order_id")
-                logger.info("[WEEX NATIVE TP CONFIRMED] %s Target: $%s | Order ID: %s", weex_symbol, tp_price_str, native_tp_id)
-            except Exception as exc:
-                logger.warning("[WEEX NATIVE TP WARNING] %s failed to set exchange TP (%s)", weex_symbol, exc)
-
-            # 4. Dedicated exchange-level Stop Loss Plan Order (/capi/v3/placeTpSlOrder)
-            native_sl_id = None
-            try:
-                sl_res = self.client.place_tpsl_order(
-                    symbol=weex_symbol,
-                    plan_type="STOP_LOSS",
-                    trigger_price=sl_price_str,
-                    size=qty_str,
-                    position_side=pos_side,
-                )
-                sl_data = sl_res.get("data") if isinstance(sl_res.get("data"), dict) else {}
-                native_sl_id = sl_res.get("orderId") or sl_res.get("order_id") or sl_data.get("orderId") or sl_data.get("order_id")
-                logger.info("[WEEX NATIVE SL CONFIRMED] %s Invalidation: $%s | Order ID: %s", weex_symbol, sl_price_str, native_sl_id)
-            except Exception as exc:
-                logger.warning("[WEEX NATIVE SL WARNING] %s failed to set exchange SL (%s)", weex_symbol, exc)
-
-            self.active_tpsl_orders[symbol] = {
-                "tp_order_id": native_tp_id,
-                "sl_order_id": native_sl_id,
-                "weex_symbol": weex_symbol,
-            }
+                logger.debug("[WEEX POSITION TP/SL] %s: %s", weex_symbol, tpsl_err)
 
             return {
                 "status": "FILLED_WEEX_LIVE",
                 "symbol": symbol,
                 "weex_symbol": weex_symbol,
                 "order_id": main_order_id,
-                "native_tp_order_id": native_tp_id,
-                "native_sl_order_id": native_sl_id,
+                "native_tp_order_id": "ATTACHED_ON_ENTRY",
+                "native_sl_order_id": "ATTACHED_ON_ENTRY",
                 "weex_live": True,
                 "response": order_res,
             }
         except Exception as exc:
             logger.error("[WEEX EXECUTION FAILED] %s: %s", symbol, exc)
-            return {"status": "FAILED", "symbol": symbol, "error": str(exc), "weex_live": True}
+            return {
+                **paper_res,
+                "status": "FAILED",
+                "symbol": symbol,
+                "error": str(exc),
+                "weex_live": False,
+            }
 
     def update_price(self, symbol: str, current_price: float, timestamp_ms: int):
         self.paper.update_price(symbol, current_price, timestamp_ms)

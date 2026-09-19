@@ -79,17 +79,24 @@ class WeexClient:
             headers=headers,
             content=body_str if data else None,
         )
+
+        try:
+            res_json = response.json()
+        except Exception:
+            res_json = None
+
         if response.status_code != 200:
             logger.error("WEEX API request error [%d]: %s", response.status_code, response.text)
+            if isinstance(res_json, dict):
+                return res_json
             response.raise_for_status()
 
-        res_json = response.json()
         if isinstance(res_json, dict):
             code = res_json.get("code")
             msg = res_json.get("msg", "")
-            if code and code != "00000":
+            if code and code not in ("0", "00000", "200"):
                 logger.error("WEEX API returned error [%s]: %s (url: %s)", code, msg, url)
-        return res_json
+        return res_json or {}
 
     # ------------------------------------------------------------------------
     # Public & Account Endpoints
@@ -176,14 +183,7 @@ class WeexClient:
             payload["timeInForce"] = "GTC"
 
         endpoint = "/capi/v3/order" if is_contract else "/api/v3/order"
-        try:
-            return self._request("POST", endpoint, data=payload, is_contract=is_contract)
-        except Exception as exc:
-            if is_contract:
-                logger.warning("Primary endpoint %s failed (%s), attempting fallback /capi/v2/order/placeOrder...", endpoint, exc)
-                payload_v2 = {**payload, "side": str(side).lower(), "size": size_str, "client_oid": client_oid}
-                return self._request("POST", "/capi/v2/order/placeOrder", data=payload_v2, is_contract=True)
-            raise
+        return self._request("POST", endpoint, data=payload, is_contract=is_contract)
 
     def set_position_tpsl(
         self,
@@ -282,7 +282,6 @@ class WeexClient:
         self,
         symbol: str,
         leverage: int = 10,
-        margin_type: str = "CROSSED",
         is_contract: bool = True,
     ) -> Dict[str, Any]:
         """Configure contract leverage for a trading pair on WEEX."""
@@ -291,14 +290,8 @@ class WeexClient:
             "symbol": symbol.upper(),
             "isolatedLongLeverage": lev_str,
             "isolatedShortLeverage": lev_str,
-            "crossLeverage": lev_str,
         }
-        try:
-            return self._request("POST", "/capi/v3/account/leverage", data=payload, is_contract=is_contract)
-        except Exception as exc:
-            logger.warning("Primary leverage endpoint failed (%s), attempting fallback /capi/v2/account/leverage...", exc)
-            payload_v2 = {**payload, "leverage": lev_str}
-            return self._request("POST", "/capi/v2/account/leverage", data=payload_v2, is_contract=True)
+        return self._request("POST", "/capi/v3/account/leverage", data=payload, is_contract=is_contract)
 
     def cancel_order(self, symbol: str, order_id: str, is_contract: bool = True) -> Dict[str, Any]:
         """Cancel an open order."""

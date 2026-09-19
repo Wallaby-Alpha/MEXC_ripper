@@ -178,28 +178,51 @@ class AlertDispatcher:
         entry_price: float,
         levels: Dict[str, float],
     ):
-        """Broadcast live trade execution and native exchange TP/SL status to Telegram."""
+        """Broadcast live trade execution, exchange rejection, or paper mode status to Telegram."""
         if self.is_paused:
             return
 
         weex_sym = exec_res.get("weex_symbol", symbol)
-        order_id = exec_res.get("order_id", "N/A")
-        tp_id = exec_res.get("native_tp_order_id") or "ATTACHED"
-        sl_id = exec_res.get("native_sl_order_id") or "ATTACHED"
+        status = exec_res.get("status", "")
+        order_id = exec_res.get("order_id")
         sl = levels.get("stop_loss", entry_price * 0.965)
         tp1 = levels.get("take_profit_1", entry_price * 1.035)
 
-        msg = (
-            f"⚡ *WEEX LIVE ORDER FILLED* ⚡\n"
-            f"• *Contract*: `{weex_sym}` (MEXC: `{symbol}`)\n"
-            f"• *Side*: `BUY / LONG` @ `10x Leverage`\n"
-            f"• *Entry Fill*: `${entry_price:.6f}`\n"
-            f"• *Margin Allocated*: `$10.00 USDT`\n\n"
-            f"🛑 *Native Stop Loss*: `${sl:.6f}` (-3.5% | ID: `{sl_id}`)\n"
-            f"🎯 *Native Take Profit*: `${tp1:.6f}` (+3.5% | ID: `{tp_id}`)\n"
-            f"📋 *Order ID*: `{order_id}`\n"
-            f"🔒 *Exchange Protection*: `Native Trigger Active`"
-        )
+        # 1. Genuine Exchange Fill Confirmation
+        if status == "FILLED_WEEX_LIVE" and order_id and order_id != "N/A":
+            msg = (
+                f"⚡ *WEEX LIVE ORDER FILLED* ⚡\n"
+                f"• *Contract*: `{weex_sym}` (MEXC: `{symbol}`)\n"
+                f"• *Side*: `BUY / LONG` @ `10x Leverage`\n"
+                f"• *Entry Fill*: `${entry_price:.6f}`\n"
+                f"• *Margin Allocated*: `$10.00 USDT`\n\n"
+                f"🛑 *Native Stop Loss*: `${sl:.6f}` (-3.5%)\n"
+                f"🎯 *Native Take Profit*: `${tp1:.6f}` (+3.5%)\n"
+                f"📋 *Exchange Order ID*: `{order_id}`\n"
+                f"🔒 *Exchange Protection*: `Native TP/SL Attached`"
+            )
+        # 2. Exchange Rejection or Order Failure
+        elif status in ("WEEX_REJECTED", "FAILED") or exec_res.get("error"):
+            err_msg = exec_res.get("error", "Unknown exchange error")
+            msg = (
+                f"⚠️ *WEEX LIVE ORDER NOT PLACED* ⚠️\n"
+                f"• *Contract*: `{weex_sym}` (MEXC: `{symbol}`)\n"
+                f"• *Attempted Side*: `BUY / LONG` @ `10x Leverage`\n"
+                f"• *Attempted Margin*: `$10.00 USDT`\n"
+                f"• *Exchange Response*: `{err_msg}`\n\n"
+                f"ℹ️ *No live capital was deployed.* Setup logged to paper tracking only."
+            )
+        # 3. Paper / Dry-Run Mode
+        else:
+            msg = (
+                f"📝 *PAPER POSITION OPENED (Simulated)*\n"
+                f"• *Symbol*: `{symbol}`\n"
+                f"• *Simulated Margin*: `$10.00 USDT` @ `10x Leverage`\n"
+                f"• *Entry*: `${entry_price:.6f}`\n"
+                f"• *Stop Loss*: `${sl:.6f}` (-3.5%)\n"
+                f"• *Target 1*: `${tp1:.6f}` (+3.5%)\n\n"
+                f"ℹ️ *Paper trading mode active (Zero real capital risk).*"
+            )
 
         if self.telegram_bot_token and self.telegram_chat_id:
             try:
