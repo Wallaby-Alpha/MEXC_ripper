@@ -31,22 +31,22 @@ class LiveMomentumScanner:
         dispatcher: Optional[AlertDispatcher] = None,
         paper_trader: Optional[PaperTrader] = None,
         executor: Optional[Any] = None,
-        trade_size_usdt: float = 1000.0,
+        trade_size_usdt: float = 1.0,
         interval: str = DEFAULT_INTERVAL,
         min_24h_turnover: float = DEFAULT_MIN_24H_TURNOVER_USDT,
-        min_score: float = 70.0,
+        min_score: float = 80.0,
         alpha_only: bool = True,
     ):
         self.client = client or MexcClient()
         self.dispatcher = dispatcher or AlertDispatcher()
-        self.paper_trader = paper_trader or PaperTrader()
+        self.paper_trader = paper_trader or PaperTrader(default_size_usdt=trade_size_usdt)
         self.executor = executor
         self.trade_size_usdt = trade_size_usdt
         self.interval = interval
         self.min_24h_turnover = min_24h_turnover
         self.min_score = min_score
         self.alpha_only = alpha_only
-        self.seen_alerts: Dict[str, int] = {}  # Cooldown tracker (ms)
+        self.seen_alerts: Dict[str, int] = {}  # 2-hour cooldown tracker (ms)
 
     def poll_cycle(self, max_symbols: int = 50) -> List[Dict[str, Any]]:
         """Executes a single scanning cycle across active spot altcoins."""
@@ -137,9 +137,9 @@ class LiveMomentumScanner:
                 is_valid, setup_name, setup_tier, score, reasons, levels = self._evaluate_setup_quality(feats, curr_price)
 
                 if is_valid and score >= self.min_score:
-                    # 30-minute symbol cooldown
+                    # 2-hour symbol cooldown (prevent churning the same coin repeatedly)
                     last_alert_time = self.seen_alerts.get(sym, 0)
-                    if now_ms - last_alert_time > 30 * 60 * 1000:
+                    if now_ms - last_alert_time > 2 * 60 * 60 * 1000:
                         self.seen_alerts[sym] = now_ms
                         self.dispatcher.dispatch_alert(feats, setup_name, setup_tier, score, reasons, levels)
                         self.paper_trader.open_simulated_trade(sym, curr_price, now_ms, setup_name, setup_tier, levels)
@@ -158,7 +158,7 @@ class LiveMomentumScanner:
                                     setup_tier=setup_tier,
                                 )
                                 if exec_res and hasattr(self.dispatcher, "notify_execution") and getattr(self.executor, "live_enabled", False):
-                                    self.dispatcher.notify_execution(exec_res, sym, curr_price, levels)
+                                    self.dispatcher.notify_execution(exec_res, sym, curr_price, levels, margin_usdt=self.trade_size_usdt)
                             except Exception as exec_err:
                                 logger.error("Executor failed for %s: %s", sym, exec_err)
 
@@ -258,12 +258,11 @@ class LiveMomentumScanner:
             reasons.append(f"Alpha vs BTC (+{rs_btc_1h*100:.1f}%)")
 
         # Empirically Calibrated Targets for Alpha Setup (+3.5% TP1, +7.5% TP2, -3.5% SL)
-        # Average peak runner is +4.56%; +3.5% captures the primary impulse with 65.2% win rate
-        stop_dist = min(atr * 1.5, curr_price * 0.035)
-        stop_loss = curr_price - stop_dist
-        tp1 = curr_price + min(atr * 1.5, curr_price * 0.035)  # +3.5% Primary Alpha Target
-        tp2 = curr_price + max(atr * 2.2, curr_price * 0.075)  # +7.5% Runner Target
-        tp3 = curr_price + max(atr * 3.5, curr_price * 0.120)  # +12.0% Moonbag Target
+        # Fixed targets eliminate 5m ATR micro-scalping fee drag and capture the primary breakout impulse
+        stop_loss = curr_price * (1.0 - 0.035)  # -3.5% Base Invalidation Stop Loss
+        tp1 = curr_price * (1.0 + 0.035)        # +3.5% Primary Alpha Target (+35% on 10x Margin)
+        tp2 = curr_price * (1.0 + 0.075)        # +7.5% Runner Target (+75% on 10x Margin)
+        tp3 = curr_price * (1.0 + 0.120)        # +12.0% Moonbag Target
 
         levels = {
             "entry_price": curr_price,

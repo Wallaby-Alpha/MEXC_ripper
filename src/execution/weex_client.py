@@ -112,9 +112,24 @@ class WeexClient:
         path = "/capi/v3/account/balance" if is_contract else "/api/v3/account/"
         return self._request("GET", path, is_contract=is_contract)
 
-    # ------------------------------------------------------------------------
-    # Trade Execution Endpoints
-    # ------------------------------------------------------------------------
+    def set_leverage(self, symbol: str, leverage: int = 10) -> bool:
+        """Sets isolated leverage for both long and short positions on the symbol."""
+        payload = {
+            "symbol": symbol,
+            "isolatedLongLeverage": str(leverage),
+            "isolatedShortLeverage": str(leverage),
+        }
+        res = self._request("POST", "/capi/v3/account/leverage", data=payload, is_contract=True)
+        if not isinstance(res, dict):
+            return False
+        code = str(res.get("code", ""))
+        return (
+            code in ("0", "00000", "200")
+            or res.get("symbol") == symbol
+            or "crossLeverage" in res
+            or "isolatedLongLeverage" in res
+            or res.get("success", False)
+        )
 
     def place_order(
         self,

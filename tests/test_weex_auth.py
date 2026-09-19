@@ -122,29 +122,16 @@ def test_weex_native_tpsl_placement(monkeypatch):
 
     assert res["status"] == "FILLED_WEEX_LIVE"
     assert res["order_id"] == "main_12345"
-    assert res["native_tp_order_id"] == "TAKE_PROFIT_999"
-    assert res["native_sl_order_id"] == "STOP_LOSS_999"
+    assert res["native_tp_order_id"] == "ATTACHED_ON_ENTRY"
+    assert res["native_sl_order_id"] == "ATTACHED_ON_ENTRY"
+    assert res["size_usdt"] == 1000.0
+    assert res["leverage"] == 10
 
     # Verify calls
-    assert len(calls) == 4
+    assert len(calls) == 2
     assert calls[0]["type"] == "leverage"
     assert calls[0]["leverage"] == 10
     assert calls[1]["type"] == "order"
     assert calls[1]["symbol"] == "SUIUSDT"
-    assert calls[2]["type"] == "tpsl"
-    assert calls[2]["plan_type"] == "TAKE_PROFIT"
-    assert float(calls[2]["trigger_price"]) == 2.15
-    assert calls[3]["type"] == "tpsl"
-    assert calls[3]["plan_type"] == "STOP_LOSS"
-    assert float(calls[3]["trigger_price"]) == 1.93
-
-    # Now verify close cancels lingering TP/SL orders
-    canceled = []
-    def mock_cancel_tpsl(symbol, order_id):
-        canceled.append(order_id)
-        return {"code": "00000"}
-
-    monkeypatch.setattr(client, "cancel_tpsl_order", mock_cancel_tpsl)
-    executor.close_position("SUIUSDT", reason="TAKE_PROFIT_REACHED")
-    assert "TAKE_PROFIT_999" in canceled
-    assert "STOP_LOSS_999" in canceled
+    assert calls[1]["tp_price"] == "2.1500"
+    assert calls[1]["sl_price"] == "1.9300"

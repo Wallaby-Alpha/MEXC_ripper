@@ -177,6 +177,7 @@ class AlertDispatcher:
         symbol: str,
         entry_price: float,
         levels: Dict[str, float],
+        margin_usdt: Optional[float] = None,
     ):
         """Broadcast live trade execution, exchange rejection, or paper mode status to Telegram."""
         if self.is_paused:
@@ -188,16 +189,21 @@ class AlertDispatcher:
         sl = levels.get("stop_loss", entry_price * 0.965)
         tp1 = levels.get("take_profit_1", entry_price * 1.035)
 
+        margin = margin_usdt or exec_res.get("size_usdt", 1.0)
+        leverage = exec_res.get("leverage", 10)
+        notional = margin * leverage
+        expected_pnl = margin * 0.35  # +35% return on margin at +3.5% price target
+
         # 1. Genuine Exchange Fill Confirmation
         if status == "FILLED_WEEX_LIVE" and order_id and order_id != "N/A":
             msg = (
                 f"⚡ *WEEX LIVE ORDER FILLED* ⚡\n"
                 f"• *Contract*: `{weex_sym}` (MEXC: `{symbol}`)\n"
-                f"• *Side*: `BUY / LONG` @ `10x Leverage`\n"
+                f"• *Side*: `BUY / LONG` @ `{leverage}x Isolated`\n"
                 f"• *Entry Fill*: `${entry_price:.6f}`\n"
-                f"• *Margin Allocated*: `$10.00 USDT`\n\n"
-                f"🛑 *Native Stop Loss*: `${sl:.6f}` (-3.5%)\n"
-                f"🎯 *Native Take Profit*: `${tp1:.6f}` (+3.5%)\n"
+                f"• *Margin Allocated*: `${margin:.2f} USDT` (`${notional:.2f}` Notional)\n\n"
+                f"🛑 *Native Stop Loss*: `${sl:.6f}` (-3.5% | -${expected_pnl:.2f})\n"
+                f"🎯 *Native Take Profit*: `${tp1:.6f}` (+3.5% | +${expected_pnl:.2f})\n"
                 f"📋 *Exchange Order ID*: `{order_id}`\n"
                 f"🔒 *Exchange Protection*: `Native TP/SL Attached`"
             )
@@ -207,8 +213,8 @@ class AlertDispatcher:
             msg = (
                 f"⚠️ *WEEX LIVE ORDER NOT PLACED* ⚠️\n"
                 f"• *Contract*: `{weex_sym}` (MEXC: `{symbol}`)\n"
-                f"• *Attempted Side*: `BUY / LONG` @ `10x Leverage`\n"
-                f"• *Attempted Margin*: `$10.00 USDT`\n"
+                f"• *Attempted Side*: `BUY / LONG` @ `{leverage}x Isolated`\n"
+                f"• *Attempted Margin*: `${margin:.2f} USDT` (`${notional:.2f}` Notional)\n"
                 f"• *Exchange Response*: `{err_msg}`\n\n"
                 f"ℹ️ *No live capital was deployed.* Setup logged to paper tracking only."
             )
@@ -217,7 +223,7 @@ class AlertDispatcher:
             msg = (
                 f"📝 *PAPER POSITION OPENED (Simulated)*\n"
                 f"• *Symbol*: `{symbol}`\n"
-                f"• *Simulated Margin*: `$10.00 USDT` @ `10x Leverage`\n"
+                f"• *Simulated Margin*: `${margin:.2f} USDT` @ `{leverage}x Isolated` (`${notional:.2f}` Notional)\n"
                 f"• *Entry*: `${entry_price:.6f}`\n"
                 f"• *Stop Loss*: `${sl:.6f}` (-3.5%)\n"
                 f"• *Target 1*: `${tp1:.6f}` (+3.5%)\n\n"

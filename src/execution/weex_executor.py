@@ -39,7 +39,7 @@ class WeexExecutor(BaseExecutor):
         if not self.live_enabled:
             logger.info("WEEX Executor initialized in DRY-RUN / PAPER MODE (Zero live capital risk).")
         else:
-            logger.warning("WEEX Executor initialized in LIVE CAPITAL TRADING MODE (Leverage: %dx, Margin: $10/trade) with Native Exchange TP/SL enforcement!", self.leverage)
+            logger.warning("WEEX Executor initialized in LIVE CAPITAL TRADING MODE (Leverage: %dx Isolated) with Native Exchange TP/SL enforcement!", self.leverage)
 
     def open_position(
         self,
@@ -147,22 +147,13 @@ class WeexExecutor(BaseExecutor):
                     **paper_res,
                     "weex_live": False,
                     "status": "WEEX_REJECTED",
+                    "size_usdt": size_usdt,
+                    "leverage": self.leverage,
                     "error": err_msg,
                     "raw": order_res,
                 }
 
             logger.info("[WEEX ENTRY FILLED] %s (%s) Order ID: %s", symbol, weex_symbol, main_order_id)
-
-            # Optional position-level UI synchronization (/capi/v3/order/tpsl)
-            try:
-                self.client.set_position_tpsl(
-                    symbol=weex_symbol,
-                    position_side=pos_side,
-                    tp_price=tp_price_str,
-                    sl_price=sl_price_str,
-                )
-            except Exception as tpsl_err:
-                logger.debug("[WEEX POSITION TP/SL] %s: %s", weex_symbol, tpsl_err)
 
             return {
                 "status": "FILLED_WEEX_LIVE",
@@ -172,6 +163,8 @@ class WeexExecutor(BaseExecutor):
                 "native_tp_order_id": "ATTACHED_ON_ENTRY",
                 "native_sl_order_id": "ATTACHED_ON_ENTRY",
                 "weex_live": True,
+                "size_usdt": size_usdt,
+                "leverage": self.leverage,
                 "response": order_res,
             }
         except Exception as exc:
@@ -180,6 +173,8 @@ class WeexExecutor(BaseExecutor):
                 **paper_res,
                 "status": "FAILED",
                 "symbol": symbol,
+                "size_usdt": size_usdt,
+                "leverage": self.leverage,
                 "error": str(exc),
                 "weex_live": False,
             }

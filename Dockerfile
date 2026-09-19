@@ -33,4 +33,4 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('https://api.mexc.com/api/v3/ping', timeout=5)" || exit 1
 
 # Default command: launch live momentum scanner daemon
-CMD ["python", "run_scanner.py", "--interval", "5m", "--poll-sec", "60", "--top-coins", "40", "--min-score", "70"]
+CMD ["python", "run_scanner.py", "--interval", "5m", "--poll-sec", "60", "--top-coins", "40", "--min-score", "80", "--trade-size", "1.0"]

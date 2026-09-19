@@ -124,8 +124,12 @@ class InteractiveTelegramBot:
         elif cmd == "/status":
             uptime_min = int((time.time() - self.start_time) / 60)
             is_alpha_only = getattr(self.scanner, "alpha_only", True)
+            try:
+                margin_val = float(getattr(self.scanner, "trade_size_usdt", 1.0))
+            except (TypeError, ValueError):
+                margin_val = 1.0
             strat_desc = "🌟 *Tier 1 Alpha Only* (`PRE_BREAKOUT_ACCUMULATION`)" if is_alpha_only else "🌐 *All Setups*"
-            exec_mode = "⚡ *WEEX Live* (10x Lev, $10 Margin, Native TP/SL)" if (getattr(self.scanner, "executor", None) and getattr(self.scanner.executor, "live_enabled", False)) else "📝 *Paper Trading* (Zero Risk)"
+            exec_mode = f"⚡ *WEEX Live* (10x Isolated, ${margin_val:.2f} Margin, Native TP/SL)" if (getattr(self.scanner, "executor", None) and getattr(self.scanner.executor, "live_enabled", False)) else "📝 *Paper Trading* (Zero Risk)"
             status_text = (
                 "⚡ *Scanner Operational Status*\n\n"
                 f"• *Status*: {'⏸ Paused' if self.is_paused else '🟢 Active & Scanning'}\n"

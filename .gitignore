@@ -31,3 +31,8 @@ exports/*.csv
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Scratch & Temporary Analysis Scripts
+analyze_*.py
+scratch_*.py
+

@@ -36,14 +36,14 @@ def parse_args():
     parser.add_argument("--poll-sec", type=int, default=60, help="Polling delay between cycles in seconds (default: 60)")
     parser.add_argument("--min-turnover", type=float, default=DEFAULT_MIN_24H_TURNOVER_USDT, help="Min 24h quote volume (default: $50,000)")
     parser.add_argument("--top-coins", type=int, default=40, help="Number of liquid altcoins to scan per cycle (default: 40)")
-    parser.add_argument("--min-score", type=float, default=70.0, help="Minimum setup score to alert (default: 70.0)")
+    parser.add_argument("--min-score", type=float, default=80.0, help="Minimum setup score to alert (default: 80.0)")
     parser.add_argument("--iterations", type=int, default=None, help="Number of scan cycles to run (default: infinite)")
     parser.add_argument("--dry-run", action="store_true", help="Execute single scan iteration and exit")
     parser.add_argument("--no-telegram", action="store_true", help="Disable interactive Telegram bot daemon")
     parser.add_argument("--weex-live", action="store_true", help="Enable live order execution with native TP/SL on WEEX")
     parser.add_argument("--alpha-only", action="store_true", default=True, help="Strictly filter for Tier 1 Pre-Breakout Accumulation setups (PF 2.36, 65.2% Win Rate)")
     parser.add_argument("--all-setups", dest="alpha_only", action="store_false", help="Allow secondary breakout chase setups")
-    parser.add_argument("--trade-size", type=float, default=None, help="Position size in USDT (default: $1000 or WEEX_TRADE_SIZE_USDT)")
+    parser.add_argument("--trade-size", type=float, default=None, help="Margin size in USDT (default: $1.00 margin = $10 notional @ 10x)")
     return parser.parse_args()
 
 
@@ -86,7 +86,7 @@ def main():
     tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     tg_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     weex_live = args.weex_live or (os.getenv("WEEX_LIVE_TRADING_ENABLED", "false").lower() == "true")
-    trade_size = args.trade_size or float(os.getenv("WEEX_TRADE_SIZE_USDT", "10.0"))
+    trade_size = args.trade_size or float(os.getenv("WEEX_TRADE_SIZE_USDT", "1.0"))
 
     exec_mode = "WEEX LIVE CAPITAL (Native TP/SL Enforced)" if weex_live else "PAPER TRADING (Zero Live Capital Risk)"
     strategy_mode = "TIER 1 ALPHA ONLY (PRE_BREAKOUT_ACCUMULATION | PF 2.36, 65.2% Win Rate)" if args.alpha_only else "ALL SETUPS"
@@ -96,7 +96,7 @@ def main():
             f"[bold green]MEXC Live Momentum Continuation Scanner & Execution Daemon[/bold green]\n"
             f"Interval: [yellow]{args.interval}[/yellow] | Scan Batch: [cyan]{args.top_coins} liquid alts[/cyan] | Delay: [white]{args.poll_sec}s[/white]\n"
             f"Strategy Filter: [bold green]{strategy_mode}[/bold green]\n"
-            f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Position Size: [bold yellow]${trade_size:,.0f} USDT[/bold yellow]\n"
+            f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Margin Size: [bold yellow]${trade_size:,.2f} USDT ($10 Notional @ 10x)[/bold yellow]\n"
             f"Execution Mode: [{'bold red blink' if weex_live else 'bold yellow'}]{exec_mode}[/{'bold red blink' if weex_live else 'bold yellow'}] | Telegram Bot: [{'bold green}ENABLED' if tg_token and not args.no_telegram else 'dim red'}DISABLED{'/bold green' if tg_token and not args.no_telegram else '/dim red'}]",
             border_style="green",
         )
