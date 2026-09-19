@@ -95,6 +95,11 @@ def test_weex_native_tpsl_placement(monkeypatch):
         })
         return {"code": "00000", "data": {"orderId": f"{plan_type}_999"}}
 
+    def mock_set_leverage(symbol, leverage, **kwargs):
+        calls.append({"type": "leverage", "symbol": symbol, "leverage": leverage})
+        return {"code": "00000"}
+
+    monkeypatch.setattr(client, "set_leverage", mock_set_leverage)
     monkeypatch.setattr(client, "place_order", mock_place_order)
     monkeypatch.setattr(client, "place_tpsl_order", mock_place_tpsl)
 
@@ -121,15 +126,17 @@ def test_weex_native_tpsl_placement(monkeypatch):
     assert res["native_sl_order_id"] == "STOP_LOSS_999"
 
     # Verify calls
-    assert len(calls) == 3
-    assert calls[0]["type"] == "order"
-    assert calls[0]["symbol"] == "SUIUSDT"
-    assert calls[1]["type"] == "tpsl"
-    assert calls[1]["plan_type"] == "TAKE_PROFIT"
-    assert calls[1]["trigger_price"] == 2.15
+    assert len(calls) == 4
+    assert calls[0]["type"] == "leverage"
+    assert calls[0]["leverage"] == 10
+    assert calls[1]["type"] == "order"
+    assert calls[1]["symbol"] == "SUIUSDT"
     assert calls[2]["type"] == "tpsl"
-    assert calls[2]["plan_type"] == "STOP_LOSS"
-    assert calls[2]["trigger_price"] == 1.93
+    assert calls[2]["plan_type"] == "TAKE_PROFIT"
+    assert float(calls[2]["trigger_price"]) == 2.15
+    assert calls[3]["type"] == "tpsl"
+    assert calls[3]["plan_type"] == "STOP_LOSS"
+    assert float(calls[3]["trigger_price"]) == 1.93
 
     # Now verify close cancels lingering TP/SL orders
     canceled = []

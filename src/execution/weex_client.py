@@ -5,7 +5,7 @@ import hashlib
 import base64
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ class WeexClient:
         # side: "BUY" or "SELL"
         # positionSide: "LONG" or "SHORT"
         # type: "MARKET" or "LIMIT"
-        # quantity: str(size)
+        # quantity: exact string representation (e.g. "500", "10", "0.001")
         if "short" in str(side).lower() or "sell" in str(side).lower():
             order_side = "SELL"
             pos_side = "SHORT"
@@ -134,25 +134,23 @@ class WeexClient:
             pos_side = "LONG"
 
         client_oid = f"mexc_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+
+        if isinstance(size, (int, float)):
+            size_str = str(int(size)) if size == int(size) else str(size)
+        else:
+            size_str = str(size)
+
         payload: Dict[str, Any] = {
             "symbol": symbol,
             "side": order_side,
             "positionSide": pos_side,
             "type": order_type.upper(),
-            "quantity": str(size),
-            "size": str(size),  # include both for v2/v3 compatibility
+            "quantity": size_str,
             "newClientOrderId": client_oid,
-            "client_oid": client_oid,
-            "clientOid": client_oid,
         }
         if price is not None and order_type.upper() == "LIMIT":
             payload["price"] = str(price)
-
-        if preset_take_profit_price is not None and preset_take_profit_price > 0:
-            payload["presetTakeProfitPrice"] = f"{preset_take_profit_price:.8f}".rstrip("0").rstrip(".")
-
-        if preset_stop_loss_price is not None and preset_stop_loss_price > 0:
-            payload["presetStopLossPrice"] = f"{preset_stop_loss_price:.8f}".rstrip("0").rstrip(".")
+            payload["timeInForce"] = "GTC"
 
         # In WEEX Contract V3, the canonical endpoint is /capi/v3/order
         endpoint = "/capi/v3/order" if is_contract else "/api/v3/order"
@@ -161,7 +159,7 @@ class WeexClient:
         except Exception as exc:
             if is_contract:
                 logger.warning("Primary endpoint %s failed (%s), attempting fallback /capi/v2/order/placeOrder...", endpoint, exc)
-                payload_v2 = {**payload, "side": str(side).lower()}
+                payload_v2 = {**payload, "side": str(side).lower(), "size": size_str, "client_oid": client_oid}
                 return self._request("POST", "/capi/v2/order/placeOrder", data=payload_v2, is_contract=True)
             raise
 
@@ -169,27 +167,37 @@ class WeexClient:
         self,
         symbol: str,
         plan_type: str,  # 'TAKE_PROFIT' or 'STOP_LOSS'
-        trigger_price: float,
-        size: float,
+        trigger_price: Union[float, str],
+        size: Union[float, str],
         position_side: str = "LONG",  # 'LONG' or 'SHORT'
         execute_price: float = 0.0,   # 0 for market execution on trigger
-        trigger_type: str = "MARK_PRICE",
+        trigger_type: str = "CONTRACT_PRICE",
     ) -> Dict[str, Any]:
         """Places a native exchange-level conditional Take-Profit or Stop-Loss plan order on WEEX."""
         tpsl_oid = f"tp_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}"
+
+        if isinstance(size, (int, float)):
+            qty_str = str(int(size)) if size == int(size) else str(size)
+        else:
+            qty_str = str(size)
+
+        if isinstance(trigger_price, (int, float)):
+            trig_str = f"{trigger_price:.8f}".rstrip("0").rstrip(".")
+        else:
+            trig_str = str(trigger_price)
+
+        exec_str = "0" if execute_price == 0 else f"{execute_price:.8f}".rstrip("0").rstrip(".")
+
         payload = {
             "symbol": symbol,
+            "clientOrderId": tpsl_oid,
+            "newClientOrderId": tpsl_oid,
             "planType": plan_type.upper(),
-            "triggerPrice": f"{trigger_price:.8f}".rstrip("0").rstrip("."),
-            "executePrice": "0" if execute_price == 0 else f"{execute_price:.8f}".rstrip("0").rstrip("."),
-            "quantity": f"{size:.4f}".rstrip("0").rstrip(".") if size > 0 else "0",
-            "size": f"{size:.4f}".rstrip("0").rstrip(".") if size > 0 else "0",
+            "triggerPrice": trig_str,
+            "executePrice": exec_str,
+            "quantity": qty_str,
             "positionSide": position_side.upper(),
             "triggerPriceType": "MARK_PRICE" if "mark" in str(trigger_type).lower() else "CONTRACT_PRICE",
-            "triggerType": trigger_type,
-            "clientOid": tpsl_oid,
-            "newClientOrderId": tpsl_oid,
-            "client_oid": tpsl_oid,
         }
 
         # Primary WEEX V3 contract TPSL endpoint with fallback
@@ -227,13 +235,13 @@ class WeexClient:
             "crossLeverage": lev_str,
             "isolatedLongLeverage": lev_str,
             "isolatedShortLeverage": lev_str,
-            "leverage": lev_str,
         }
         try:
             return self._request("POST", "/capi/v3/account/leverage", data=payload, is_contract=is_contract)
         except Exception as exc:
             logger.warning("Primary leverage endpoint failed (%s), attempting fallback /capi/v2/account/leverage...", exc)
-            return self._request("POST", "/capi/v2/account/leverage", data=payload, is_contract=True)
+            payload_v2 = {**payload, "leverage": lev_str}
+            return self._request("POST", "/capi/v2/account/leverage", data=payload_v2, is_contract=True)
 
     def cancel_order(self, symbol: str, order_id: str, is_contract: bool = True) -> Dict[str, Any]:
         """Cancel an open order."""
