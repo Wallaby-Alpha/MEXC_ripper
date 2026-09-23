@@ -93,12 +93,13 @@ def main():
 
     console.print(
         Panel.fit(
-            f"[bold green]MEXC Live Momentum Continuation Scanner & Execution Daemon[/bold green]\n"
+            f"[bold green]MEXC Live Momentum Continuation Scanner - OPTIMIZED EDITION v2.0[/bold green]\n"
             f"Interval: [yellow]{args.interval}[/yellow] | Scan Batch: [cyan]{args.top_coins} liquid alts[/cyan] | Delay: [white]{args.poll_sec}s[/white]\n"
             f"Strategy Filter: [bold green]{strategy_mode}[/bold green]\n"
             f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Margin Size: [bold yellow]${trade_size:,.2f} USDT ($10 Notional @ 10x)[/bold yellow]\n"
+            f"Optimizations Active: [bold cyan]Toxic Blacklist (7 coins), RVOL Ceiling (8.0x), RSI Ceiling (68.0), Max 3 Concurrent Pos, Max 2 Trades/15m[/bold cyan]\n"
             f"Execution Mode: [{'bold red blink' if weex_live else 'bold yellow'}]{exec_mode}[/{'bold red blink' if weex_live else 'bold yellow'}] | Telegram Bot: [{'bold green}ENABLED' if tg_token and not args.no_telegram else 'dim red'}DISABLED{'/bold green' if tg_token and not args.no_telegram else '/dim red'}]",
-            border_style="green",
+            border_style="cyan",
         )
     )
 

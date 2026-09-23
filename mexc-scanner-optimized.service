@@ -1,0 +1,17 @@
+[Unit]
+Description=MEXC Altcoin Momentum Scanner & WEEX Live Trader (Optimized v2.0)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mexc-momentum-scanner-optimized
+EnvironmentFile=/opt/mexc-momentum-scanner-optimized/.env
+ExecStart=/usr/bin/python3 run_scanner.py --interval 5m --poll-sec 60 --top-coins 40 --min-score 80 --trade-size 1.0 --weex-live
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -13,6 +13,11 @@ from config import (
     PREFILTER_MIN_RVOL_20,
     PREFILTER_MIN_1H_RETURN_PCT,
     DEFAULT_MIN_24H_TURNOVER_USDT,
+    TOXIC_COIN_BLACKLIST,
+    MAX_CONCURRENT_POSITIONS,
+    MAX_TRADES_PER_15MIN,
+    MAX_RVOL_CEILING,
+    MAX_RSI_CEILING,
 )
 from src.data_ingestion.mexc_client import MexcClient
 from src.features.feature_pipeline import extract_features_point_in_time
@@ -47,6 +52,7 @@ class LiveMomentumScanner:
         self.min_score = min_score
         self.alpha_only = alpha_only
         self.seen_alerts: Dict[str, int] = {}  # 2-hour cooldown tracker (ms)
+        self.trade_history_timestamps: List[int] = []  # 15-minute cluster rate limiter
 
     def poll_cycle(self, max_symbols: int = 50) -> List[Dict[str, Any]]:
         """Executes a single scanning cycle across active spot altcoins."""
@@ -68,6 +74,7 @@ class LiveMomentumScanner:
             if t["symbol"].endswith("USDT")
             and float(t.get("quoteVolume", 0.0)) >= self.min_24h_turnover
             and t["symbol"] not in ("BTCUSDT", "ETHUSDT")
+            and t["symbol"] not in TOXIC_COIN_BLACKLIST
         ]
         # Sort by 24h volume descending and take top N
         sorted_tickers = sorted(
@@ -137,10 +144,24 @@ class LiveMomentumScanner:
                 is_valid, setup_name, setup_tier, score, reasons, levels = self._evaluate_setup_quality(feats, curr_price)
 
                 if is_valid and score >= self.min_score:
+                    # Risk Collar 1: Maximum Concurrent Open Positions
+                    open_pos = self.paper_trader.get_open_positions()
+                    if len(open_pos) >= MAX_CONCURRENT_POSITIONS:
+                        logger.info("[SKIPPED - MAX CONCURRENT POSITIONS REACHED] %s skipped (%d active open positions)", sym, len(open_pos))
+                        continue
+
+                    # Risk Collar 2: 15-Minute Cluster Rate Limit
+                    fifteen_min_ago = now_ms - (15 * 60 * 1000)
+                    self.trade_history_timestamps = [t for t in self.trade_history_timestamps if t > fifteen_min_ago]
+                    if len(self.trade_history_timestamps) >= MAX_TRADES_PER_15MIN:
+                        logger.info("[SKIPPED - CLUSTER RATE LIMIT REACHED] %s skipped (%d trades in last 15m)", sym, len(self.trade_history_timestamps))
+                        continue
+
                     # 2-hour symbol cooldown (prevent churning the same coin repeatedly)
                     last_alert_time = self.seen_alerts.get(sym, 0)
                     if now_ms - last_alert_time > 2 * 60 * 60 * 1000:
                         self.seen_alerts[sym] = now_ms
+                        self.trade_history_timestamps.append(now_ms)
                         self.dispatcher.dispatch_alert(feats, setup_name, setup_tier, score, reasons, levels)
                         self.paper_trader.open_simulated_trade(sym, curr_price, now_ms, setup_name, setup_tier, levels)
 
@@ -196,11 +217,21 @@ class LiveMomentumScanner:
         rs_btc_1h = feats.get("rs_vs_btc_1h", 0.0)
         extension = feats.get("extension_atr", 0.0)
 
-        # Hard Trap Filters (Avoid known blow-offs and dead coins)
+        # Hard Trap & Empirical Optimization Filters
+        sym = feats.get("symbol", "")
+        base_sym = sym.replace("USDT", "")
+        if sym in TOXIC_COIN_BLACKLIST or base_sym in TOXIC_COIN_BLACKLIST:
+            logger.info("[FILTERED - TOXIC COIN] %s is blacklisted due to historical negative expected value", sym)
+            return False, "", "", 0.0, [], {}  # Toxic coin exclusion filter
+
         if atr_pct < 0.005:
             return False, "", "", 0.0, [], {}  # Insufficient volatility (<0.5%)
-        if rvol > 8.0 and extension > 5.0:
-            return False, "", "", 0.0, [], {}  # Climax blow-off exhaustion
+        if rvol > MAX_RVOL_CEILING:
+            logger.info("[FILTERED - PARABOLIC CLIMAX] %s RVOL %.1fx exceeds ceiling %.1fx", sym, rvol, MAX_RVOL_CEILING)
+            return False, "", "", 0.0, [], {}  # Climax blow-off exhaustion (>8.0x)
+        if rsi > MAX_RSI_CEILING:
+            logger.info("[FILTERED - OVERBOUGHT RSI] %s RSI %.1f exceeds ceiling %.1f", sym, rsi, MAX_RSI_CEILING)
+            return False, "", "", 0.0, [], {}  # Overbought peak (>68.0)
         if cvd_divergence == 1.0:
             return False, "", "", 0.0, [], {}  # Price pumped on net seller delta
 

@@ -1,57 +1,77 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# MEXC Altcoin Momentum Scanner: 1-Click DigitalOcean Droplet Deploy Script
+# MEXC Momentum Scanner (OPTIMIZED EDITION v2.0)
+# 1-Click DigitalOcean Droplet Automated Deployment Script
 # Compatible with Ubuntu 22.04 / 24.04 LTS & Debian 11/12
 # ==============================================================================
 
 set -e
 
-echo "========================================================="
-echo " Deploying MEXC Momentum Scanner to DigitalOcean Droplet"
-echo "========================================================="
+echo "=================================================================="
+echo " 🚀 Deploying MEXC Momentum Scanner (Optimized v2.0) to Droplet"
+echo "=================================================================="
 
-# 1. Ensure system updates
+# 1. System Package Updates & Essential Tools
+echo "[+] Installing core system dependencies..."
 sudo apt-get update -y
-sudo apt-get install -y curl git ufw
+sudo apt-get install -y python3 python3-pip python3-venv git curl ufw
 
-# 2. Check and Install Docker & Docker Compose if not present
-if ! command -v docker &> /dev/null; then
-    echo "[+] Installing Docker Engine..."
-    curl -fsSL https://get.docker.com | sh
-    sudo systemctl enable --now docker
-else
-    echo "[✓] Docker is already installed."
+# 2. Setup Working Directory
+APP_DIR="/opt/mexc-momentum-scanner-optimized"
+if [ "$PWD" != "$APP_DIR" ]; then
+    echo "[+] Ensuring application directory exists at $APP_DIR..."
+    sudo mkdir -p "$APP_DIR"
+    if [ -d ".git" ] || [ -f "run_scanner.py" ]; then
+        sudo cp -r ./* "$APP_DIR"/ 2>/dev/null || true
+    fi
+    cd "$APP_DIR"
 fi
 
-if ! docker compose version &> /dev/null; then
-    echo "[+] Installing Docker Compose plugin..."
-    sudo apt-get install -y docker-compose-plugin
-fi
-
-# 3. Create .env if missing
+# 3. Environment Configuration Check
 if [ ! -f ".env" ]; then
-    echo "[!] .env not found. Copying template from .env.example..."
-    cp .env.example .env
-    echo "========================================================="
-    echo " Please edit .env now with your credentials:"
-    echo " nano .env"
-    echo " (Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable bot)"
-    echo "========================================================="
+    echo "[!] .env configuration file missing. Creating from template..."
+    cat << 'EOF' > .env
+# Telegram Bot Credentials
+TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN_FROM_BOTFATHER"
+TELEGRAM_CHAT_ID="YOUR_TELEGRAM_CHAT_ID"
+
+# WEEX Live Futures API
+WEEX_API_KEY="YOUR_WEEX_API_KEY"
+WEEX_API_SECRET="YOUR_WEEX_API_SECRET"
+WEEX_PASSPHRASE="YOUR_WEEX_PASSPHRASE"
+WEEX_BASE_URL="https://api-contract.weex.com"
+
+# Execution & Risk Parameters
+WEEX_LIVE_TRADING_ENABLED=true
+WEEX_TRADE_SIZE_USDT=1.0
+WEEX_LEVERAGE=10
+WEEX_MAX_MARGIN_MULTIPLIER=1.30
+EOF
+    echo "=================================================================="
+    echo " ⚠️ IMPORTANT: Please edit .env now with your API keys!"
+    echo " Run: nano .env"
+    echo "=================================================================="
 fi
 
-# 4. Build and start background container
-echo "[+] Building container and launching scanner daemon..."
-docker compose up -d --build
+# 4. Install Python Dependencies
+echo "[+] Installing Python requirements..."
+pip3 install --upgrade pip
+pip3 install -r requirements.txt
 
-# 5. Show container status
-echo ""
-echo "========================================================="
-echo " [✓] Deployment Complete!"
-echo " Scanner is running 24/7 in the background."
-echo "========================================================="
-echo " Helpful Management Commands:"
-echo "   • View Live Logs:       docker compose logs -f"
-echo "   • Check Status:         docker compose ps"
-echo "   • Stop Scanner:         docker compose down"
-echo "   • Restart Scanner:      docker compose restart"
-echo "========================================================="
+# 5. Configure Systemd 24/7 Daemon
+echo "[+] Installing systemd background service..."
+sudo cp mexc-scanner-optimized.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable mexc-scanner-optimized
+sudo systemctl restart mexc-scanner-optimized
+
+echo "=================================================================="
+echo " ✅ Deployment Complete!"
+echo " The Optimized Scanner is now running 24/7 in the background."
+echo "=================================================================="
+echo " Useful Droplet Management Commands:"
+echo "   • Stream Live Logs:   journalctl -u mexc-scanner-optimized -f"
+echo "   • Check Service Status: systemctl status mexc-scanner-optimized"
+echo "   • Restart Bot:        sudo systemctl restart mexc-scanner-optimized"
+echo "   • Stop Bot:           sudo systemctl stop mexc-scanner-optimized"
+echo "=================================================================="

@@ -52,3 +52,17 @@ BACKOFF_FACTOR = 1.5
 
 # Database path
 SQLITE_DB_PATH = RAW_DATA_DIR / "mexc_market_data.sqlite"
+
+# Quantitative Optimizations (Empirically Calibrated)
+TOXIC_COIN_BLACKLIST = {
+    "ZECUSDT", "ENAUSDT", "ETHFIUSDT", "AEROUSDT", "LTCUSDT", "ASTERUSDT", "ARBUSDT",
+    "ZEC", "ENA", "ETHFI", "AERO", "LTC", "ASTER", "ARB"
+}
+MAX_CONCURRENT_POSITIONS = 3       # Prevent over-leveraging and market-wide dip cascades
+MAX_TRADES_PER_15MIN = 2           # Cluster protection limit
+MAX_RVOL_CEILING = 8.0             # Exclude parabolic climax exhaustion spikes (>8.0x)
+MAX_RSI_CEILING = 68.0             # Exclude overbought pullback zones (>68.0)
+MIN_RVOL_FLOOR = 1.5               # Minimum relative volume for valid entry
+MIN_ALERT_SCORE = 85.0             # High-probability signal score threshold
+DEFAULT_MARGIN_USDT = 1.0          # $1.00 margin @ 10x leverage = $10.00 notional USD
+
