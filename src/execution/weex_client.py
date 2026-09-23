@@ -113,11 +113,14 @@ class WeexClient:
         return self._request("GET", path, is_contract=is_contract)
 
     def set_leverage(self, symbol: str, leverage: int = 10) -> bool:
-        """Sets isolated leverage for both long and short positions on the symbol."""
+        """Sets leverage for both isolated and cross margin modes on the symbol."""
         payload = {
             "symbol": symbol,
+            "leverage": str(leverage),
             "isolatedLongLeverage": str(leverage),
             "isolatedShortLeverage": str(leverage),
+            "longLeverage": str(leverage),
+            "shortLeverage": str(leverage),
         }
         res = self._request("POST", "/capi/v3/account/leverage", data=payload, is_contract=True)
         if not isinstance(res, dict):

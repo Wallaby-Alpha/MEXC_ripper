@@ -76,8 +76,17 @@ class WeexExecutor(BaseExecutor):
                 "note": f"{symbol} not listed on WEEX perpetual contracts",
             }
 
-        # Calculate position size: size_usdt is margin allocated (e.g. $10 at 10x = $100 notional)
-        notional_usdt = size_usdt * self.leverage
+        # 0. Enforce leverage setting on WEEX upfront before order construction
+        if self.live_enabled:
+            try:
+                self.client.set_leverage(symbol=weex_symbol, leverage=self.leverage)
+                logger.info("[WEEX LEVERAGE] Configured %s to %dx leverage", weex_symbol, self.leverage)
+            except Exception as lev_err:
+                logger.warning("[WEEX LEVERAGE WARNING] %s leverage set warning: %s", weex_symbol, lev_err)
+
+        # Calculate position size: size_usdt is target margin (e.g. $1.00 margin @ 10x = $10.00 notional)
+        target_margin = min(size_usdt, 1.50)  # Hard cap: Max $1.50 margin per trade
+        notional_usdt = target_margin * self.leverage
         raw_qty = notional_usdt / entry_price if entry_price > 0 else 1.0
         qty_str = self.resolver.format_size(weex_symbol, raw_qty)
         qty = float(qty_str)
@@ -87,32 +96,32 @@ class WeexExecutor(BaseExecutor):
         sl_price = float(sl_price_str)
 
         # Capital Budget Protection Collar:
-        # If exchange minOrderSize forces an order that exceeds margin budget by >30%, abort live execution!
+        # If exchange minOrderSize forces an order that exceeds margin budget by >30% (max $1.30 margin), ABORT!
         actual_notional = qty * entry_price
         actual_margin = actual_notional / self.leverage if self.leverage > 0 else actual_notional
-        max_allowed_margin = size_usdt * float(os.getenv("WEEX_MAX_MARGIN_MULTIPLIER", "1.30"))
+        max_allowed_margin = target_margin * float(os.getenv("WEEX_MAX_MARGIN_MULTIPLIER", "1.30"))
 
-        if actual_margin > max_allowed_margin:
+        if actual_margin > max_allowed_margin or actual_margin > 1.50:
             logger.warning(
-                "[WEEX SKIPPED: MIN_ORDER_EXCEEDS_BUDGET] %s (%s) min order %s requires $%.2f margin ($%.2f notional), exceeding target margin $%.2f (collar limit: $%.2f). Live order aborted.",
+                "[WEEX SKIPPED: MARGIN_CAP_EXCEEDED] %s (%s) order qty %s requires $%.2f margin ($%.2f notional), exceeding target margin $%.2f (collar limit: $%.2f). Live order aborted.",
                 symbol,
                 weex_symbol,
                 qty_str,
                 actual_margin,
                 actual_notional,
-                size_usdt,
+                target_margin,
                 max_allowed_margin,
             )
             return {
                 **paper_res,
                 "weex_live": False,
-                "status": "SKIPPED_MIN_ORDER_EXCEEDS_BUDGET",
+                "status": "SKIPPED_MARGIN_CAP_EXCEEDED",
                 "symbol": symbol,
                 "weex_symbol": weex_symbol,
                 "required_margin": actual_margin,
-                "target_margin": size_usdt,
+                "target_margin": target_margin,
                 "notional_usdt": actual_notional,
-                "note": f"Min order {qty_str} requires ${actual_margin:.2f} margin (budget: ${size_usdt:.2f})",
+                "note": f"Order requires ${actual_margin:.2f} margin (cap: ${max_allowed_margin:.2f})",
             }
 
         if not self.live_enabled:
@@ -139,12 +148,6 @@ class WeexExecutor(BaseExecutor):
 
         # Live Execution on WEEX with 10x Leverage and Native Exchange TP/SL
         try:
-            # 0. Enforce 10x leverage on the exchange before placing order
-            try:
-                self.client.set_leverage(symbol=weex_symbol, leverage=self.leverage)
-                logger.info("[WEEX LEVERAGE] Configured %s to %dx leverage", weex_symbol, self.leverage)
-            except Exception as lev_err:
-                logger.warning("[WEEX LEVERAGE WARNING] %s leverage set warning: %s", weex_symbol, lev_err)
 
             logger.info("[WEEX LIVE ORDER] Submitting market entry for %s as %s (%s, Qty: %s, Margin: $%.2f @ %dx)...", symbol, weex_symbol, side, qty_str, actual_margin, self.leverage)
             pos_side = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
