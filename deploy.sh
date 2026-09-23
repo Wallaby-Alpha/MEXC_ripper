@@ -2,7 +2,7 @@
 # ==============================================================================
 # MEXC Momentum Scanner (OPTIMIZED EDITION v2.0)
 # 1-Click DigitalOcean Droplet Automated Deployment Script
-# Compatible with Ubuntu 22.04 / 24.04 LTS & Debian 11/12
+# Compatible with Ubuntu 22.04 / 24.04 LTS (PEP 668 compliant) & Debian 11/12
 # ==============================================================================
 
 set -e
@@ -53,10 +53,15 @@ EOF
     echo "=================================================================="
 fi
 
-# 4. Install Python Dependencies
-echo "[+] Installing Python requirements..."
-pip3 install --upgrade pip
-pip3 install -r requirements.txt
+# 4. Create Virtual Environment & Install Python Dependencies (PEP 668 Compliant)
+echo "[+] Creating Python virtual environment..."
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+fi
+
+echo "[+] Installing Python requirements inside virtual environment..."
+./venv/bin/pip install --upgrade pip
+./venv/bin/pip install -r requirements.txt
 
 # 5. Configure Systemd 24/7 Daemon
 echo "[+] Installing systemd background service..."
