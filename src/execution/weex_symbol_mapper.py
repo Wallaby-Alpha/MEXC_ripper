@@ -162,11 +162,6 @@ class WeexSymbolResolver:
             # Offline fallback
             resolved = clean_upper
 
-        # 4. Enforce WEEX API trading restriction check (if api_allowed_symbols is populated)
-        if self.api_allowed_symbols and resolved not in self.api_allowed_symbols:
-            logger.warning("[WEEX API UNSUPPORTED] %s (%s) is not in WEEX's apiTradingSymbols whitelist. Skipping live execution.", mexc_symbol, resolved)
-            return None
-
         return resolved
 
     def format_price(self, canonical_symbol: str, price: float) -> str:
