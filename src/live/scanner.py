@@ -76,6 +76,10 @@ class LiveMomentumScanner:
             and t["symbol"] not in ("BTCUSDT", "ETHUSDT")
             and t["symbol"] not in TOXIC_COIN_BLACKLIST
         ]
+        # Filter active universe strictly to coins listed and API-tradeable on WEEX
+        if self.executor and hasattr(self.executor, "resolver"):
+            active_symbols = [s for s in active_symbols if self.executor.resolver.resolve(s) is not None]
+
         # Sort by 24h volume descending and take top N
         sorted_tickers = sorted(
             [t for t in tickers if t["symbol"] in set(active_symbols)],
@@ -169,7 +173,6 @@ class LiveMomentumScanner:
                     last_alert_time = self.seen_alerts.get(sym, 0)
                     if now_ms - last_alert_time > 2 * 60 * 60 * 1000:
                         self.seen_alerts[sym] = now_ms
-                        self.trade_history_timestamps.append(now_ms)
                         self.dispatcher.dispatch_alert(feats, setup_name, setup_tier, score, reasons, levels)
                         self.paper_trader.open_simulated_trade(sym, curr_price, now_ms, setup_name, setup_tier, levels)
 
@@ -186,10 +189,16 @@ class LiveMomentumScanner:
                                     setup_name=setup_name,
                                     setup_tier=setup_tier,
                                 )
+                                # Only record cluster timestamp if order was actually filled or paper mode
+                                if not getattr(self.executor, "live_enabled", False) or (exec_res and exec_res.get("status") == "FILLED_WEEX_LIVE"):
+                                    self.trade_history_timestamps.append(now_ms)
+
                                 if exec_res and hasattr(self.dispatcher, "notify_execution") and getattr(self.executor, "live_enabled", False):
                                     self.dispatcher.notify_execution(exec_res, sym, curr_price, levels, margin_usdt=exec_res.get("size_usdt", self.trade_size_usdt))
                             except Exception as exec_err:
                                 logger.error("Executor failed for %s: %s", sym, exec_err, exc_info=True)
+                        else:
+                            self.trade_history_timestamps.append(now_ms)
 
                         alerts_triggered.append(feats)
 
