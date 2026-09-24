@@ -156,11 +156,13 @@ class WeexSymbolResolver:
             resolved = clean_upper
 
         if not resolved:
-            if self.contract_map:
-                logger.info("Symbol %s is not tradeable as a perpetual contract on WEEX.", mexc_symbol)
-                return None
-            # Offline fallback
-            resolved = clean_upper
+            return None
+
+        # 4. Enforce WEEX API trading restriction check
+        # WEEX API strictly returns [-1058] for any pair not in apiTradingSymbols
+        if self.api_allowed_symbols and resolved not in self.api_allowed_symbols:
+            logger.info("[WEEX API UNSUPPORTED] %s (%s) is not in WEEX's official apiTradingSymbols list. Skipping live execution.", mexc_symbol, resolved)
+            return None
 
         return resolved
 
