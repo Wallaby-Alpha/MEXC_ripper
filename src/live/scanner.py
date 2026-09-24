@@ -145,9 +145,17 @@ class LiveMomentumScanner:
 
                 if is_valid and score >= self.min_score:
                     # Risk Collar 1: Maximum Concurrent Open Positions
-                    open_pos = self.paper_trader.get_open_positions()
-                    if len(open_pos) >= MAX_CONCURRENT_POSITIONS:
-                        logger.info("[SKIPPED - MAX CONCURRENT POSITIONS REACHED] %s skipped (%d active open positions)", sym, len(open_pos))
+                    open_count = len(getattr(self.paper_trader, "open_positions", {}))
+                    if self.executor and hasattr(self.executor, "get_open_positions"):
+                        try:
+                            exec_positions = self.executor.get_open_positions()
+                            if isinstance(exec_positions, (dict, list)):
+                                open_count = max(open_count, len(exec_positions))
+                        except Exception:
+                            pass
+
+                    if open_count >= MAX_CONCURRENT_POSITIONS:
+                        logger.info("[SKIPPED - MAX CONCURRENT POSITIONS REACHED] %s skipped (%d active open positions)", sym, open_count)
                         continue
 
                     # Risk Collar 2: 15-Minute Cluster Rate Limit
@@ -181,12 +189,12 @@ class LiveMomentumScanner:
                                 if exec_res and hasattr(self.dispatcher, "notify_execution") and getattr(self.executor, "live_enabled", False):
                                     self.dispatcher.notify_execution(exec_res, sym, curr_price, levels, margin_usdt=exec_res.get("size_usdt", self.trade_size_usdt))
                             except Exception as exec_err:
-                                logger.error("Executor failed for %s: %s", sym, exec_err)
+                                logger.error("Executor failed for %s: %s", sym, exec_err, exc_info=True)
 
                         alerts_triggered.append(feats)
 
             except Exception as exc:
-                logger.debug("Error analyzing %s: %s", sym, exc)
+                logger.error("Error analyzing %s: %s", sym, exc, exc_info=True)
 
         return alerts_triggered
 

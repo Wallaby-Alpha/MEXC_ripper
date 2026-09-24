@@ -154,3 +154,7 @@ class PaperTrader:
             "total_pnl_usdt": total_pnl,
             "avg_return_pct": avg_ret * 100.0,
         }
+
+    def get_open_positions(self) -> Dict[str, "PaperPosition"]:
+        """Returns currently active open paper positions."""
+        return self.open_positions
