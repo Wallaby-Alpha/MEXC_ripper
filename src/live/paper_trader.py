@@ -1,4 +1,5 @@
 """Paper trading module: simulates fills, monitors open trades, trails stops to breakeven, and tracks forward PnL."""
+import os
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
@@ -42,10 +43,16 @@ class PaperTrader:
     def __init__(
         self,
         default_size_usdt: float = 1000.0,
+        time_decay_minutes: Optional[int] = None,
     ):
         self.default_size_usdt = default_size_usdt
+        self.time_decay_minutes = time_decay_minutes or int(os.getenv("TIME_DECAY_MINUTES", "90"))
         self.open_positions: Dict[str, PaperPosition] = {}
         self.closed_positions: List[PaperPosition] = []
+
+    def get_open_positions(self) -> Dict[str, PaperPosition]:
+        """Returns map of active open positions."""
+        return self.open_positions
 
     def open_simulated_trade(
         self,
@@ -67,23 +74,24 @@ class PaperTrader:
             setup_name=setup_name,
             setup_tier=setup_tier,
             stop_loss=trade_levels.get("stop_loss", entry_price * 0.965),
-            take_profit_1=trade_levels.get("take_profit_1", entry_price * 1.035),
-            take_profit_2=trade_levels.get("take_profit_2", entry_price * 1.075),
+            take_profit_1=trade_levels.get("take_profit_1", entry_price * 1.040),
+            take_profit_2=trade_levels.get("take_profit_2", entry_price * 1.080),
             take_profit_3=trade_levels.get("take_profit_3", entry_price * 1.120),
             size_usdt=self.default_size_usdt,
         )
         self.open_positions[symbol] = pos
         logger.info(
-            "[PAPER POSITION OPENED] %s @ $%.6f | SL: $%.6f | TP2: $%.6f ($%.0f USDT virtual)",
+            "[PAPER POSITION OPENED] %s @ $%.6f | SL: $%.6f | TP1: $%.6f (+4.0%%) | TP2: $%.6f ($%.0f USDT virtual)",
             symbol,
             entry_price,
             pos.stop_loss,
+            pos.take_profit_1,
             pos.take_profit_2,
             self.default_size_usdt,
         )
 
     def update_price(self, symbol: str, current_price: float, timestamp_ms: int):
-        """Updates open position, checks stops, trailing breakeven, targets, and 6h time stop."""
+        """Updates open position, checks stops, trailing breakeven, targets, and 90m time decay exit."""
         if symbol not in self.open_positions:
             return
 
@@ -92,20 +100,28 @@ class PaperTrader:
         pos.highest_price = max(pos.highest_price, current_price)
         pos.lowest_price = min(pos.lowest_price, current_price)
 
-        # 1. 6-Hour Time Stop Invalidation (Kills stagnant post-pump trades)
-        if (timestamp_ms - pos.entry_time_ms) >= 6 * 3600 * 1000:
-            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TIMEOUT (6H TIME STOP)")
+        # 1. Time Decay Exit (Momentum Invalidation after 90m)
+        # Trades held 15-60m produce 65.1% WR, while trades held >4h decay to 41.5% WR.
+        # If position has not reached TP1 within 90 minutes, exit to protect capital.
+        time_elapsed_ms = timestamp_ms - pos.entry_time_ms
+        if time_elapsed_ms >= (self.time_decay_minutes * 60 * 1000) and not pos.tp1_hit:
+            self._close_position(
+                pos,
+                current_price,
+                timestamp_ms,
+                f"CLOSED_TIME_DECAY ({self.time_decay_minutes}M)",
+            )
             return
 
-        # 2. If TP1 hit (+3.5%), trail stop loss to Breakeven (+0.2% fee coverage)
+        # 2. If TP1 hit (+4.0%), trail stop loss to Breakeven (+0.2% fee coverage)
         if not pos.tp1_hit and current_price >= pos.take_profit_1:
             pos.tp1_hit = True
             pos.stop_loss = pos.entry_price * 1.002  # Cover fee / breakeven
-            logger.info("[PAPER TRADE TP1 REACHED] %s @ $%.6f | Stop trailed to Breakeven", symbol, current_price)
+            logger.info("[PAPER TRADE TP1 REACHED] %s @ $%.6f (+4.0%%) | Stop trailed to Breakeven", symbol, current_price)
 
-        # 3. Check TP2 (+7.5% validated MFE target)
+        # 3. Check TP2 (+8.0% runner target)
         if current_price >= pos.take_profit_2:
-            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP2 (+7.5% TARGET)")
+            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP2 (+8.0% TARGET)")
             return
 
         # 4. Check Stop Loss (or Breakeven stop)

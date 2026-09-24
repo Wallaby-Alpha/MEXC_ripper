@@ -46,7 +46,7 @@ class InteractiveTelegramBot:
             "🤖 *MEXC Momentum Scanner Bot Online!*\n"
             "🎯 *Strategy Filter*: Tier 1 Alpha Only (`PRE_BREAKOUT_ACCUMULATION`)\n"
             "📊 *Empirical Edge*: `65.2% Win Rate | 2.36 Profit Factor`\n"
-            "🎯 *Primary Target*: `+3.5% (+35% at 10x)` | 🛑 *Stop Loss*: `-3.5%`\n\n"
+            "🎯 *Primary Target*: `+4.0% (+40% at 10x)` | 🛑 *Stop Loss*: `-3.5%`\n\n"
             "Send `/help` for available commands."
         )
 

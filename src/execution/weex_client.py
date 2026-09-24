@@ -23,9 +23,9 @@ class WeexClient:
         spot_base_url: str = "https://api-spot.weex.com",
         timeout: float = 10.0,
     ):
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.passphrase = passphrase
+        self.api_key = api_key.strip().strip("'\"") if api_key else ""
+        self.api_secret = api_secret.strip().strip("'\"") if api_secret else ""
+        self.passphrase = passphrase.strip().strip("'\"") if passphrase else ""
         self.contract_base_url = contract_base_url.rstrip("/")
         self.spot_base_url = spot_base_url.rstrip("/")
         self.client = httpx.Client(timeout=timeout)
@@ -148,7 +148,14 @@ class WeexClient:
         WEEX V3 requires client order IDs to have the 'b-' prefix.
         """
         # Clean side and positionSide for WEEX V3 Contract API:
-        if "short" in str(side).lower() or "sell" in str(side).lower():
+        side_lower = str(side).lower()
+        if side_lower in ("close_long", "sell_close"):
+            order_side = "SELL"
+            pos_side = "LONG"
+        elif side_lower in ("close_short", "buy_close"):
+            order_side = "BUY"
+            pos_side = "SHORT"
+        elif "short" in side_lower or "sell" in side_lower:
             order_side = "SELL"
             pos_side = "SHORT"
         else:

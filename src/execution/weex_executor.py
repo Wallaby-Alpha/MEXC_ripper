@@ -91,6 +91,10 @@ class WeexExecutor(BaseExecutor):
         actual_notional = qty * entry_price
         actual_margin = actual_notional / self.leverage if self.leverage > 0 else actual_notional
         max_allowed_margin = size_usdt * float(os.getenv("WEEX_MAX_MARGIN_MULTIPLIER", "1.30"))
+        
+        hard_cap_str = os.getenv("WEEX_MAX_HARD_MARGIN_CAP")
+        if hard_cap_str and float(hard_cap_str) > 0 and size_usdt <= float(hard_cap_str):
+            max_allowed_margin = max(max_allowed_margin, float(hard_cap_str))
 
         if actual_margin > max_allowed_margin:
             logger.warning(
@@ -112,7 +116,7 @@ class WeexExecutor(BaseExecutor):
                 "required_margin": actual_margin,
                 "target_margin": size_usdt,
                 "notional_usdt": actual_notional,
-                "note": f"Min order {qty_str} requires ${actual_margin:.2f} margin (budget: ${size_usdt:.2f})",
+                "note": f"Min order {qty_str} requires ${actual_margin:.2f} margin (budget: ${size_usdt:.2f}, collar: ${max_allowed_margin:.2f})",
             }
 
         if not self.live_enabled:
@@ -218,7 +222,20 @@ class WeexExecutor(BaseExecutor):
             }
 
     def update_price(self, symbol: str, current_price: float, timestamp_ms: int):
+        was_open = symbol in self.paper.trader.open_positions
         self.paper.update_price(symbol, current_price, timestamp_ms)
+        is_still_open = symbol in self.paper.trader.open_positions
+
+        # If position was closed via time decay exit, execute live market close on WEEX
+        if was_open and not is_still_open and self.live_enabled:
+            if self.paper.trader.closed_positions:
+                last_closed = self.paper.trader.closed_positions[-1]
+                if last_closed.symbol == symbol and "TIME_DECAY" in last_closed.status:
+                    logger.info(
+                        "[WEEX LIVE TIME DECAY EXIT] %s exceeded momentum horizon. Closing live position on WEEX...",
+                        symbol,
+                    )
+                    self.close_position(symbol, reason=last_closed.status)
 
     def close_position(self, symbol: str, reason: str = "MANUAL_CLOSE") -> Optional[Dict[str, Any]]:
         if not self.live_enabled:
@@ -226,11 +243,18 @@ class WeexExecutor(BaseExecutor):
 
         # Close on WEEX & cancel lingering native TP/SL orders
         try:
-            weex_symbol = symbol if "_" in symbol else symbol.replace("USDT", "_USDT")
+            weex_symbol = self.resolver.resolve(symbol) or (symbol if "_" in symbol else symbol.replace("USDT", "_USDT"))
+            pos = self.paper.trader.open_positions.get(symbol)
+            qty_str = ""
+            if pos and pos.entry_price > 0:
+                raw_qty = (pos.size_usdt * self.leverage) / pos.entry_price
+                qty_str = self.resolver.format_size(weex_symbol, raw_qty)
+
             self.client.place_order(
                 symbol=weex_symbol,
                 side="close_long",
                 order_type="market",
+                size=qty_str if qty_str else "1",
                 is_contract=True,
             )
             # Cancel open conditional orders for this symbol

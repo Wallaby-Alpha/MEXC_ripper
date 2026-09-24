@@ -1,6 +1,7 @@
 """Live polling scanner for MEXC altcoin momentum continuation.
 Reuses the features/ module 1:1 without modification, applying the Phase 1 validated statistical criteria.
 """
+import os
 import time
 import logging
 from typing import List, Dict, Any, Optional, Tuple
@@ -36,6 +37,8 @@ class LiveMomentumScanner:
         min_24h_turnover: float = DEFAULT_MIN_24H_TURNOVER_USDT,
         min_score: float = 80.0,
         alpha_only: bool = True,
+        max_open_positions: Optional[int] = None,
+        max_trades_per_15m: Optional[int] = None,
     ):
         self.client = client or MexcClient()
         self.dispatcher = dispatcher or AlertDispatcher()
@@ -47,6 +50,14 @@ class LiveMomentumScanner:
         self.min_score = min_score
         self.alpha_only = alpha_only
         self.seen_alerts: Dict[str, int] = {}  # 2-hour cooldown tracker (ms)
+
+        # Cluster Circuit Breaker & Throttle Limits
+        self.max_open_positions = max_open_positions or int(os.getenv("MAX_OPEN_POSITIONS", "3"))
+        self.max_trades_per_15m = max_trades_per_15m or int(os.getenv("MAX_TRADES_PER_15M", "2"))
+        self.circuit_breaker_loss_threshold = int(os.getenv("CIRCUIT_BREAKER_LOSSES", "2"))
+        self.circuit_breaker_cooldown_min = int(os.getenv("CIRCUIT_BREAKER_COOLDOWN_MIN", "30"))
+        self.trade_timestamps: List[int] = []
+        self.circuit_breaker_until_ms: int = 0
 
     def poll_cycle(self, max_symbols: int = 50) -> List[Dict[str, Any]]:
         """Executes a single scanning cycle across active spot altcoins."""
@@ -137,10 +148,59 @@ class LiveMomentumScanner:
                 is_valid, setup_name, setup_tier, score, reasons, levels = self._evaluate_setup_quality(feats, curr_price)
 
                 if is_valid and score >= self.min_score:
+                    # 1. Circuit Breaker Active Check (Market Dump Pause)
+                    if now_ms < self.circuit_breaker_until_ms:
+                        remaining_min = (self.circuit_breaker_until_ms - now_ms) / 60000.0
+                        logger.info(
+                            "[CIRCUIT BREAKER ACTIVE] Market dump protection engaged (%.1f min remaining). Suppressing %s.",
+                            remaining_min,
+                            sym,
+                        )
+                        continue
+
+                    # 2. Check Recent Stop-Loss Cascade (Auto-Engage Circuit Breaker)
+                    recent_losses = [
+                        p for p in self.paper_trader.closed_positions
+                        if p.exit_time_ms and (now_ms - p.exit_time_ms) <= 15 * 60 * 1000 and "SL" in p.status
+                    ]
+                    if len(recent_losses) >= self.circuit_breaker_loss_threshold:
+                        self.circuit_breaker_until_ms = now_ms + (self.circuit_breaker_cooldown_min * 60 * 1000)
+                        resume_dt = datetime.fromtimestamp(self.circuit_breaker_until_ms / 1000, tz=timezone.utc).strftime("%H:%M:%S UTC")
+                        logger.warning(
+                            "🚨 [CIRCUIT BREAKER ENGAGED] %d stop-losses hit in last 15m (cascade detected). Pausing entries for %d min until %s!",
+                            len(recent_losses),
+                            self.circuit_breaker_cooldown_min,
+                            resume_dt,
+                        )
+                        continue
+
+                    # 3. Check Max Open Positions (Portfolio Limit: Max 3 by default)
+                    open_count = len(self.paper_trader.open_positions)
+                    if open_count >= self.max_open_positions:
+                        logger.info(
+                            "[CIRCUIT BREAKER: MAX POSITIONS REACHED] Currently holding %d/%d positions. Skipping new entry %s.",
+                            open_count,
+                            self.max_open_positions,
+                            sym,
+                        )
+                        continue
+
+                    # 4. Check 15-Minute Cluster Rate Limit (Max 2 trades per 15m)
+                    cutoff_15m = now_ms - (15 * 60 * 1000)
+                    self.trade_timestamps = [t for t in self.trade_timestamps if t >= cutoff_15m]
+                    if len(self.trade_timestamps) >= self.max_trades_per_15m:
+                        logger.info(
+                            "[CIRCUIT BREAKER: CLUSTER RATE LIMIT] %d trades already opened in last 15m. Skipping new entry %s.",
+                            len(self.trade_timestamps),
+                            sym,
+                        )
+                        continue
+
                     # 2-hour symbol cooldown (prevent churning the same coin repeatedly)
                     last_alert_time = self.seen_alerts.get(sym, 0)
                     if now_ms - last_alert_time > 2 * 60 * 60 * 1000:
                         self.seen_alerts[sym] = now_ms
+                        self.trade_timestamps.append(now_ms)
                         self.dispatcher.dispatch_alert(feats, setup_name, setup_tier, score, reasons, levels)
                         self.paper_trader.open_simulated_trade(sym, curr_price, now_ms, setup_name, setup_tier, levels)
 
@@ -257,11 +317,11 @@ class LiveMomentumScanner:
             score += 5.0
             reasons.append(f"Alpha vs BTC (+{rs_btc_1h*100:.1f}%)")
 
-        # Empirically Calibrated Targets for Alpha Setup (+3.5% TP1, +7.5% TP2, -3.5% SL)
+        # Empirically Calibrated Targets for Alpha Setup (+4.0% TP1, +8.0% TP2, -3.5% SL)
         # Fixed targets eliminate 5m ATR micro-scalping fee drag and capture the primary breakout impulse
         stop_loss = curr_price * (1.0 - 0.035)  # -3.5% Base Invalidation Stop Loss
-        tp1 = curr_price * (1.0 + 0.035)        # +3.5% Primary Alpha Target (+35% on 10x Margin)
-        tp2 = curr_price * (1.0 + 0.075)        # +7.5% Runner Target (+75% on 10x Margin)
+        tp1 = curr_price * (1.0 + 0.040)        # +4.0% Primary Alpha Target (+40% on 10x Margin)
+        tp2 = curr_price * (1.0 + 0.080)        # +8.0% Runner Target (+80% on 10x Margin)
         tp3 = curr_price * (1.0 + 0.120)        # +12.0% Moonbag Target
 
         levels = {
