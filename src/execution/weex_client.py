@@ -23,9 +23,9 @@ class WeexClient:
         spot_base_url: str = "https://api-spot.weex.com",
         timeout: float = 10.0,
     ):
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.passphrase = passphrase
+        self.api_key = str(api_key or "").strip().strip('"').strip("'")
+        self.api_secret = str(api_secret or "").strip().strip('"').strip("'")
+        self.passphrase = str(passphrase or "").strip().strip('"').strip("'")
         self.contract_base_url = contract_base_url.rstrip("/")
         self.spot_base_url = spot_base_url.rstrip("/")
         self.client = httpx.Client(timeout=timeout)
