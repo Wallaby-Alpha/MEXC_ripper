@@ -9,8 +9,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-# Load .env file
-load_dotenv()
+# Load local .env file explicitly
+from pathlib import Path
+env_file = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=env_file, override=True)
 
 from config import DEFAULT_INTERVAL, DEFAULT_MIN_24H_TURNOVER_USDT
 from src.live.scanner import LiveMomentumScanner
