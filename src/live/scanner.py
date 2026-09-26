@@ -52,7 +52,7 @@ class LiveMomentumScanner:
         self.seen_alerts: Dict[str, int] = {}  # 2-hour cooldown tracker (ms)
 
         # Cluster Circuit Breaker & Throttle Limits
-        self.max_open_positions = max_open_positions or int(os.getenv("MAX_OPEN_POSITIONS", "3"))
+        self.max_open_positions = max_open_positions or int(os.getenv("MAX_OPEN_POSITIONS", "4"))
         self.max_trades_per_15m = max_trades_per_15m or int(os.getenv("MAX_TRADES_PER_15M", "2"))
         self.circuit_breaker_loss_threshold = int(os.getenv("CIRCUIT_BREAKER_LOSSES", "2"))
         self.circuit_breaker_cooldown_min = int(os.getenv("CIRCUIT_BREAKER_COOLDOWN_MIN", "30"))
