@@ -67,17 +67,18 @@ class PaperTrader:
             setup_name=setup_name,
             setup_tier=setup_tier,
             stop_loss=trade_levels.get("stop_loss", entry_price * 0.965),
-            take_profit_1=trade_levels.get("take_profit_1", entry_price * 1.035),
-            take_profit_2=trade_levels.get("take_profit_2", entry_price * 1.075),
+            take_profit_1=trade_levels.get("take_profit_1", entry_price * 1.040),
+            take_profit_2=trade_levels.get("take_profit_2", entry_price * 1.080),
             take_profit_3=trade_levels.get("take_profit_3", entry_price * 1.120),
             size_usdt=self.default_size_usdt,
         )
         self.open_positions[symbol] = pos
         logger.info(
-            "[PAPER POSITION OPENED] %s @ $%.6f | SL: $%.6f | TP2: $%.6f ($%.0f USDT virtual)",
+            "[PAPER POSITION OPENED] %s @ $%.6f | SL: $%.6f | TP1: $%.6f (+4.0%%) | TP2: $%.6f ($%.0f USDT virtual)",
             symbol,
             entry_price,
             pos.stop_loss,
+            pos.take_profit_1,
             pos.take_profit_2,
             self.default_size_usdt,
         )
@@ -97,15 +98,15 @@ class PaperTrader:
             self._close_position(pos, current_price, timestamp_ms, "CLOSED_TIMEOUT (6H TIME STOP)")
             return
 
-        # 2. If TP1 hit (+3.5%), trail stop loss to Breakeven (+0.2% fee coverage)
+        # 2. If TP1 hit (+4.0%), trail stop loss to Breakeven (+0.2% fee coverage)
         if not pos.tp1_hit and current_price >= pos.take_profit_1:
             pos.tp1_hit = True
             pos.stop_loss = pos.entry_price * 1.002  # Cover fee / breakeven
-            logger.info("[PAPER TRADE TP1 REACHED] %s @ $%.6f | Stop trailed to Breakeven", symbol, current_price)
+            logger.info("[PAPER TRADE TP1 REACHED] %s @ $%.6f (+4.0%%) | Stop trailed to Breakeven", symbol, current_price)
 
-        # 3. Check TP2 (+7.5% validated MFE target)
+        # 3. Check TP2 (+8.0% runner target)
         if current_price >= pos.take_profit_2:
-            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP2 (+7.5% TARGET)")
+            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP2 (+8.0% TARGET)")
             return
 
         # 4. Check Stop Loss (or Breakeven stop)

@@ -305,11 +305,11 @@ class LiveMomentumScanner:
             score += 5.0
             reasons.append(f"Alpha vs BTC (+{rs_btc_1h*100:.1f}%)")
 
-        # Empirically Calibrated Targets for Alpha Setup (+3.5% TP1, +7.5% TP2, -3.5% SL)
+        # Empirically Calibrated Targets for Alpha Setup (+4.0% TP1, +8.0% TP2, -3.5% SL)
         # Fixed targets eliminate 5m ATR micro-scalping fee drag and capture the primary breakout impulse
         stop_loss = curr_price * (1.0 - 0.035)  # -3.5% Base Invalidation Stop Loss
-        tp1 = curr_price * (1.0 + 0.035)        # +3.5% Primary Alpha Target (+35% on 10x Margin)
-        tp2 = curr_price * (1.0 + 0.075)        # +7.5% Runner Target (+75% on 10x Margin)
+        tp1 = curr_price * (1.0 + 0.040)        # +4.0% Primary Alpha Target (+40% on 10x Margin)
+        tp2 = curr_price * (1.0 + 0.080)        # +8.0% Runner Target (+80% on 10x Margin)
         tp3 = curr_price * (1.0 + 0.120)        # +12.0% Moonbag Target
 
         levels = {

@@ -25,8 +25,8 @@ class PaperExecutor(BaseExecutor):
         timestamp_ms = int(time.time() * 1000)
         levels = {
             "stop_loss": stop_loss,
-            "take_profit_1": entry_price * 1.035,
-            "take_profit_2": take_profit,
+            "take_profit_1": entry_price * 1.040,
+            "take_profit_2": take_profit if (take_profit and take_profit > (entry_price * 1.040)) else (entry_price * 1.080),
             "take_profit_3": entry_price * 1.120,
         }
         self.trader.open_simulated_trade(

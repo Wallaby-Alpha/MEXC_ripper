@@ -58,7 +58,7 @@ TOXIC_COIN_BLACKLIST = {
     "ZECUSDT", "ENAUSDT", "ETHFIUSDT", "AEROUSDT", "LTCUSDT", "ASTERUSDT", "ARBUSDT",
     "ZEC", "ENA", "ETHFI", "AERO", "LTC", "ASTER", "ARB"
 }
-MAX_CONCURRENT_POSITIONS = 3       # Prevent over-leveraging and market-wide dip cascades
+MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "4"))       # Cap at 4 positions to prevent correlation dump cascades
 MAX_TRADES_PER_15MIN = 2           # Cluster protection limit
 MAX_RVOL_CEILING = 8.0             # Exclude parabolic climax exhaustion spikes (>8.0x)
 MAX_RSI_CEILING = 68.0             # Exclude overbought pullback zones (>68.0)
