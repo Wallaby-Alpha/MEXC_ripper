@@ -67,7 +67,17 @@ class InteractiveTelegramBot:
             }
             if reply_markup:
                 payload["reply_markup"] = reply_markup
-            self.client.post(f"{self.base_url}/sendMessage", json=payload, timeout=8.0)
+            res = self.client.post(f"{self.base_url}/sendMessage", json=payload, timeout=8.0)
+            if res.status_code != 200:
+                logger.warning("Telegram send_message failed (%d: %s). Retrying as plain text...", res.status_code, res.text)
+                payload.pop("parse_mode", None)
+                res2 = self.client.post(f"{self.base_url}/sendMessage", json=payload, timeout=8.0)
+                if res2.status_code == 200:
+                    logger.info("Telegram message delivered successfully as plain text.")
+                else:
+                    logger.error("Telegram plain text retry failed (%d: %s)", res2.status_code, res2.text)
+            else:
+                logger.info("Telegram message delivered successfully.")
         except Exception as exc:
             logger.error("Failed sending Telegram message: %s", exc)
 
@@ -82,7 +92,12 @@ class InteractiveTelegramBot:
                 }
                 res = self.client.get(f"{self.base_url}/getUpdates", params=params)
                 if res.status_code != 200:
-                    time.sleep(3.0)
+                    if res.status_code == 409:
+                        logger.error("Telegram 409 Conflict: Another bot instance is polling this token! Retrying in 15s...")
+                        time.sleep(15.0)
+                    else:
+                        logger.warning("Telegram getUpdates returned %d: %s", res.status_code, res.text)
+                        time.sleep(3.0)
                     continue
 
                 data = res.json()

@@ -148,9 +148,18 @@ class AlertDispatcher:
         if self.telegram_bot_token and self.telegram_chat_id:
             try:
                 tg_url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
-                httpx.post(tg_url, json={"chat_id": self.telegram_chat_id, "text": text_msg, "parse_mode": "Markdown"}, timeout=5.0)
+                res = httpx.post(tg_url, json={"chat_id": self.telegram_chat_id, "text": text_msg, "parse_mode": "Markdown"}, timeout=8.0)
+                if res.status_code != 200:
+                    logger.warning("Telegram alert failed (%d: %s). Retrying as plain text...", res.status_code, res.text)
+                    res2 = httpx.post(tg_url, json={"chat_id": self.telegram_chat_id, "text": text_msg}, timeout=8.0)
+                    if res2.status_code == 200:
+                        logger.info("Telegram alert delivered successfully as plain text.")
+                    else:
+                        logger.error("Telegram alert plain text delivery failed (%d: %s)", res2.status_code, res2.text)
+                else:
+                    logger.info("Telegram alert delivered successfully.")
             except Exception as exc:
-                logger.warning("Telegram alert failed: %s", exc)
+                logger.warning("Telegram alert exception: %s", exc)
 
         # Discord
         if self.discord_webhook_url:
@@ -247,6 +256,15 @@ class AlertDispatcher:
         if self.telegram_bot_token and self.telegram_chat_id:
             try:
                 tg_url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
-                httpx.post(tg_url, json={"chat_id": self.telegram_chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=5.0)
+                res = httpx.post(tg_url, json={"chat_id": self.telegram_chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=8.0)
+                if res.status_code != 200:
+                    logger.warning("Telegram execution alert failed (%d: %s). Retrying as plain text...", res.status_code, res.text)
+                    res2 = httpx.post(tg_url, json={"chat_id": self.telegram_chat_id, "text": msg}, timeout=8.0)
+                    if res2.status_code == 200:
+                        logger.info("Telegram execution alert delivered successfully as plain text.")
+                    else:
+                        logger.error("Telegram execution alert plain text delivery failed (%d: %s)", res2.status_code, res2.text)
+                else:
+                    logger.info("Telegram execution alert delivered successfully.")
             except Exception as exc:
-                logger.warning("Telegram execution alert failed: %s", exc)
+                logger.warning("Telegram execution alert exception: %s", exc)
