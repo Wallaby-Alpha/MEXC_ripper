@@ -112,6 +112,25 @@ class WeexClient:
         path = "/capi/v3/account/balance" if is_contract else "/api/v3/account/"
         return self._request("GET", path, is_contract=is_contract)
 
+    def get_open_positions(self) -> List[Dict[str, Any]]:
+        """Fetch all currently open positions from WEEX V3 Contract API."""
+        try:
+            res = self._request("GET", "/capi/v3/account/position/allPosition", is_contract=True)
+            data = res.get("data", res) if isinstance(res, dict) else res
+            if isinstance(data, list):
+                open_pos = []
+                for p in data:
+                    if not isinstance(p, dict):
+                        continue
+                    sz = float(p.get("total") or p.get("size") or p.get("positionAmt") or p.get("holdAmount") or 0.0)
+                    if sz > 0:
+                        open_pos.append(p)
+                return open_pos
+            return []
+        except Exception as exc:
+            logger.warning("Failed to fetch open positions from WEEX: %s", exc)
+            return []
+
     def set_leverage(self, symbol: str, leverage: int = 10) -> bool:
         """Sets leverage for both isolated and cross margin modes on the symbol."""
         payload = {

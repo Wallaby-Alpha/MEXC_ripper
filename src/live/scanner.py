@@ -149,17 +149,15 @@ class LiveMomentumScanner:
 
                 if is_valid and score >= self.min_score:
                     # Risk Collar 1: Maximum Concurrent Open Positions
-                    open_count = len(getattr(self.paper_trader, "open_positions", {}))
-                    if self.executor and hasattr(self.executor, "get_open_positions"):
-                        try:
-                            exec_positions = self.executor.get_open_positions()
-                            if isinstance(exec_positions, (dict, list)):
-                                open_count = max(open_count, len(exec_positions))
-                        except Exception:
-                            pass
+                    # In live mode, strictly count actual live positions entered on WEEX
+                    if self.executor and getattr(self.executor, "live_enabled", False):
+                        live_open = self.executor.get_open_positions()
+                        open_count = len(live_open) if isinstance(live_open, (dict, list)) else 0
+                    else:
+                        open_count = len(getattr(self.paper_trader, "open_positions", {}))
 
                     if open_count >= MAX_CONCURRENT_POSITIONS:
-                        logger.info("[SKIPPED - MAX CONCURRENT POSITIONS REACHED] %s skipped (%d active open positions)", sym, open_count)
+                        logger.info("[SKIPPED - MAX CONCURRENT POSITIONS REACHED] %s skipped (%d active open positions on WEEX)", sym, open_count)
                         continue
 
                     # Risk Collar 2: 15-Minute Cluster Rate Limit
@@ -189,8 +187,15 @@ class LiveMomentumScanner:
                                     setup_name=setup_name,
                                     setup_tier=setup_tier,
                                 )
-                                # Only record cluster timestamp if order was actually filled or paper mode
-                                if not getattr(self.executor, "live_enabled", False) or (exec_res and exec_res.get("status") == "FILLED_WEEX_LIVE"):
+                                # In live WEEX mode, if order was NOT filled on WEEX, do NOT count it as an active open position!
+                                if getattr(self.executor, "live_enabled", False):
+                                    if not exec_res or exec_res.get("status") != "FILLED_WEEX_LIVE":
+                                        if sym in self.paper_trader.open_positions:
+                                            del self.paper_trader.open_positions[sym]
+                                        logger.info("[WEEX NOT FILLED] %s did not enter live on WEEX. Active slot released.", sym)
+                                    else:
+                                        self.trade_history_timestamps.append(now_ms)
+                                else:
                                     self.trade_history_timestamps.append(now_ms)
 
                                 if exec_res and hasattr(self.dispatcher, "notify_execution") and getattr(self.executor, "live_enabled", False):

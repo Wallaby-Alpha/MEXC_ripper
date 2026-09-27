@@ -158,6 +158,10 @@ class WeexSymbolResolver:
         if not resolved:
             return None
 
+        # Filter strictly to official WEEX API trading symbols to prevent [-1058] errors
+        if self.api_allowed_symbols and resolved not in self.api_allowed_symbols:
+            return None
+
         return resolved
 
     def format_price(self, canonical_symbol: str, price: float) -> str:
