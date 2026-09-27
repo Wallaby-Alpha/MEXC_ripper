@@ -80,6 +80,10 @@ class LiveMomentumScanner:
             and float(t.get("quoteVolume", 0.0)) >= self.min_24h_turnover
             and t["symbol"] not in ("BTCUSDT", "ETHUSDT")
         ]
+        # Filter active universe strictly to coins listed and API-tradeable on WEEX
+        if self.executor and hasattr(self.executor, "resolver"):
+            active_symbols = [s for s in active_symbols if self.executor.resolver.resolve(s) is not None]
+
         # Sort by 24h volume descending and take top N
         sorted_tickers = sorted(
             [t for t in tickers if t["symbol"] in set(active_symbols)],
@@ -174,11 +178,17 @@ class LiveMomentumScanner:
                         )
                         continue
 
-                    # 3. Check Max Open Positions (Portfolio Limit: Max 3 by default)
-                    open_count = len(self.paper_trader.open_positions)
+                    # 3. Check Max Open Positions (Portfolio Limit: Max 4 by default)
+                    # In live mode, strictly count actual live positions entered on WEEX
+                    if self.executor and getattr(self.executor, "live_enabled", False):
+                        live_open = self.executor.get_open_positions()
+                        open_count = len(live_open) if isinstance(live_open, (dict, list)) else 0
+                    else:
+                        open_count = len(self.paper_trader.open_positions)
+
                     if open_count >= self.max_open_positions:
                         logger.info(
-                            "[CIRCUIT BREAKER: MAX POSITIONS REACHED] Currently holding %d/%d positions. Skipping new entry %s.",
+                            "[CIRCUIT BREAKER: MAX POSITIONS REACHED] Currently holding %d/%d positions on WEEX. Skipping new entry %s.",
                             open_count,
                             self.max_open_positions,
                             sym,
@@ -196,11 +206,9 @@ class LiveMomentumScanner:
                         )
                         continue
 
-                    # 2-hour symbol cooldown (prevent churning the same coin repeatedly)
                     last_alert_time = self.seen_alerts.get(sym, 0)
                     if now_ms - last_alert_time > 2 * 60 * 60 * 1000:
                         self.seen_alerts[sym] = now_ms
-                        self.trade_timestamps.append(now_ms)
                         self.dispatcher.dispatch_alert(feats, setup_name, setup_tier, score, reasons, levels)
                         self.paper_trader.open_simulated_trade(sym, curr_price, now_ms, setup_name, setup_tier, levels)
 
@@ -217,6 +225,17 @@ class LiveMomentumScanner:
                                     setup_name=setup_name,
                                     setup_tier=setup_tier,
                                 )
+                                # In live WEEX mode, if order was NOT filled on WEEX, do NOT count it as an active open position!
+                                if getattr(self.executor, "live_enabled", False):
+                                    if not exec_res or exec_res.get("status") != "FILLED_WEEX_LIVE":
+                                        if sym in self.paper_trader.open_positions:
+                                            del self.paper_trader.open_positions[sym]
+                                        logger.info("[WEEX NOT FILLED] %s did not enter live on WEEX. Active slot released.", sym)
+                                    else:
+                                        self.trade_timestamps.append(now_ms)
+                                else:
+                                    self.trade_timestamps.append(now_ms)
+
                                 if exec_res and hasattr(self.dispatcher, "notify_execution") and getattr(self.executor, "live_enabled", False):
                                     self.dispatcher.notify_execution(exec_res, sym, curr_price, levels, margin_usdt=exec_res.get("size_usdt", self.trade_size_usdt))
                             except Exception as exec_err:
