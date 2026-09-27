@@ -5,7 +5,7 @@ import hashlib
 import base64
 import json
 import logging
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List
 import httpx
 
 logger = logging.getLogger(__name__)
