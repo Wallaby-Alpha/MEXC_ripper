@@ -65,9 +65,7 @@ class PaperTrader:
         sl = trade_levels.get("stop_loss", entry_price * 0.965)
         sl_dist = entry_price - sl
         be_trig = trade_levels.get("be_trigger", entry_price + (1.25 * sl_dist))
-        tp1 = trade_levels.get("take_profit_1", entry_price + (3.0 * sl_dist))
-        tp2 = trade_levels.get("take_profit_2", entry_price + (4.5 * sl_dist))
-        tp3 = trade_levels.get("take_profit_3", entry_price + (6.0 * sl_dist))
+        tp = trade_levels.get("take_profit_1", trade_levels.get("take_profit", entry_price + (3.0 * sl_dist)))
 
         pos = PaperPosition(
             symbol=symbol,
@@ -77,14 +75,14 @@ class PaperTrader:
             setup_tier=setup_tier,
             stop_loss=sl,
             be_trigger=be_trig,
-            take_profit_1=tp1,
-            take_profit_2=tp2,
-            take_profit_3=tp3,
+            take_profit_1=tp,
+            take_profit_2=tp,
+            take_profit_3=tp,
             size_usdt=self.default_size_usdt,
         )
         self.open_positions[symbol] = pos
         logger.info(
-            "[PAPER POSITION OPENED 3R] %s @ $%.6f | SL: $%.6f (-3.5%%) | BE Trigger: $%.6f (+4.38%%) | TP1: $%.6f (+10.5%%)",
+            "[PAPER POSITION OPENED 3R] %s @ $%.6f | SL: $%.6f (-3.5%%) | BE Trigger: $%.6f (+4.38%%) | TP: $%.6f (+10.5%%)",
             symbol,
             entry_price,
             pos.stop_loss,
@@ -118,9 +116,9 @@ class PaperTrader:
                 pos.stop_loss,
             )
 
-        # 3. Check Take Profit: 3x SL (+10.5%)
+        # 3. Check Take Profit: 3x SL (+10.5% single target, 100% exit)
         if current_price >= pos.take_profit_1:
-            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP1 (3x SL / +10.5% TARGET)")
+            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP (3x SL / +10.5% TARGET)")
             return
 
         # 4. Check Stop Loss (or Breakeven stop)

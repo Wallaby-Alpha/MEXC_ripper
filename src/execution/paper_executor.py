@@ -24,12 +24,12 @@ class PaperExecutor(BaseExecutor):
     ) -> Dict[str, Any]:
         timestamp_ms = int(time.time() * 1000)
         sl_dist = entry_price - stop_loss if stop_loss and stop_loss < entry_price else entry_price * 0.035
+        tp = entry_price + (3.0 * sl_dist)
         levels = {
             "stop_loss": stop_loss,
             "be_trigger": entry_price + (1.25 * sl_dist),
-            "take_profit_1": entry_price + (3.0 * sl_dist),
-            "take_profit_2": entry_price + (4.5 * sl_dist),
-            "take_profit_3": entry_price + (6.0 * sl_dist),
+            "take_profit_1": tp,
+            "take_profit": tp,
         }
         self.trader.open_simulated_trade(
             symbol=symbol,

@@ -61,7 +61,7 @@ def display_open_positions_table(paper_trader: PaperTrader):
     table.add_column("Peak Run (MFE)", justify="right", style="bold green")
     table.add_column("Stop Loss", justify="right", style="bold red")
     table.add_column("BE Trigger (1.25R)", justify="right", style="yellow")
-    table.add_column("Target (3R TP1)", justify="right", style="bold green")
+    table.add_column("Take Profit (3R: +10.5%)", justify="right", style="bold green")
 
     for sym, pos in paper_trader.open_positions.items():
         ret = ((pos.current_price - pos.entry_price) / pos.entry_price) * 100.0
