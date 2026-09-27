@@ -43,10 +43,10 @@ class InteractiveTelegramBot:
         self.thread.start()
         logger.info("Interactive Telegram Bot started successfully.")
         self.send_message(
-            "🤖 *MEXC Momentum Scanner Bot Online!*\n"
+            "🤖 *MEXC Momentum Scanner Bot Online (3R EDITION)!*\n"
             "🎯 *Strategy Filter*: Tier 1 Alpha Only (`PRE_BREAKOUT_ACCUMULATION`)\n"
-            "📊 *Empirical Edge*: `65.2% Win Rate | 2.36 Profit Factor`\n"
-            "🎯 *Primary Target*: `+4.0% (+40% at 10x)` | 🛑 *Stop Loss*: `-3.5%`\n\n"
+            "📊 *Target Structure*: `3R Target (+10.5%) | 1.25R BE Trigger (+4.38%)`\n"
+            "🎯 *Primary Target (3R)*: `+10.5% (+105% at 10x)` | 🛑 *Stop Loss (1R)*: `-3.5%`\n\n"
             "Send `/help` for available commands."
         )
 

@@ -52,7 +52,7 @@ def display_open_positions_table(paper_trader: PaperTrader):
     if not paper_trader.open_positions:
         return
 
-    table = Table(title="Active Paper Positions (Trailing Breakeven & Multi-Target)", header_style="bold blue", border_style="blue")
+    table = Table(title="Active Paper Positions (3R Strategy: Trailing BE at 1.25R & 3R Target)", header_style="bold blue", border_style="blue")
     table.add_column("Symbol", style="bold cyan")
     table.add_column("Archetype", style="magenta")
     table.add_column("Entry Price", justify="right")
@@ -60,12 +60,14 @@ def display_open_positions_table(paper_trader: PaperTrader):
     table.add_column("Unrealized PnL", justify="right")
     table.add_column("Peak Run (MFE)", justify="right", style="bold green")
     table.add_column("Stop Loss", justify="right", style="bold red")
-    table.add_column("Target (TP1)", justify="right", style="bold green")
+    table.add_column("BE Trigger (1.25R)", justify="right", style="yellow")
+    table.add_column("Target (3R TP1)", justify="right", style="bold green")
 
     for sym, pos in paper_trader.open_positions.items():
         ret = ((pos.current_price - pos.entry_price) / pos.entry_price) * 100.0
         peak = ((pos.highest_price - pos.entry_price) / pos.entry_price) * 100.0
         color = "bold green" if ret >= 0 else "bold red"
+        be_status = "[bold green]TRAILED[/bold green]" if getattr(pos, "be_triggered", False) else f"${getattr(pos, 'be_trigger', 0.0):.6f}"
 
         table.add_row(
             sym,
@@ -75,7 +77,8 @@ def display_open_positions_table(paper_trader: PaperTrader):
             f"[{color}]{ret:+.2f}%[/{color}]",
             f"+{peak:.2f}%",
             f"${pos.stop_loss:.6f}",
-            f"${pos.take_profit_1:.6f} (+4.0%)",
+            be_status,
+            f"${pos.take_profit_1:.6f} (+10.5%)",
         )
 
     console.print(table)
@@ -93,11 +96,11 @@ def main():
 
     console.print(
         Panel.fit(
-            f"[bold green]MEXC Live Momentum Continuation Scanner - OPTIMIZED EDITION v2.0[/bold green]\n"
+            f"[bold green]MEXC Live Momentum Continuation Scanner - OPTIMIZED 3R EDITION[/bold green]\n"
             f"Interval: [yellow]{args.interval}[/yellow] | Scan Batch: [cyan]{args.top_coins} liquid alts[/cyan] | Delay: [white]{args.poll_sec}s[/white]\n"
             f"Strategy Filter: [bold green]{strategy_mode}[/bold green]\n"
             f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Margin Size: [bold yellow]${trade_size:,.2f} USDT ($10 Notional @ 10x)[/bold yellow]\n"
-            f"Optimizations Active: [bold cyan]Toxic Blacklist (7 coins), RVOL Ceiling (8.0x), RSI Ceiling (68.0), Max 3 Concurrent Pos, Max 2 Trades/15m[/bold cyan]\n"
+            f"3R Parameters: [bold cyan]Stop Loss: -3.5% (1R) | BE Trigger: +4.38% (1.25R) | Take Profit: +10.5% (3R)[/bold cyan]\n"
             f"Execution Mode: [{'bold red blink' if weex_live else 'bold yellow'}]{exec_mode}[/{'bold red blink' if weex_live else 'bold yellow'}] | Telegram Bot: [{'bold green}ENABLED' if tg_token and not args.no_telegram else 'dim red'}DISABLED{'/bold green' if tg_token and not args.no_telegram else '/dim red'}]",
             border_style="cyan",
         )

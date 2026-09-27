@@ -305,16 +305,21 @@ class LiveMomentumScanner:
             score += 5.0
             reasons.append(f"Alpha vs BTC (+{rs_btc_1h*100:.1f}%)")
 
-        # Empirically Calibrated Targets for Alpha Setup (+4.0% TP1, +8.0% TP2, -3.5% SL)
-        # Fixed targets eliminate 5m ATR micro-scalping fee drag and capture the primary breakout impulse
-        stop_loss = curr_price * (1.0 - 0.035)  # -3.5% Base Invalidation Stop Loss
-        tp1 = curr_price * (1.0 + 0.040)        # +4.0% Primary Alpha Target (+40% on 10x Margin)
-        tp2 = curr_price * (1.0 + 0.080)        # +8.0% Runner Target (+80% on 10x Margin)
-        tp3 = curr_price * (1.0 + 0.120)        # +12.0% Moonbag Target
+        # Empirically Calibrated 3R Strategy:
+        # Base Stop Loss: -3.5% (1R Risk)
+        # Breakeven Trigger: +4.375% (1.25R = 1.25x Stop Loss Distance) -> Move SL to Breakeven (+0.2% fee cover)
+        # Take Profit: +10.5% (3R Reward = 3x Stop Loss Distance)
+        sl_distance = curr_price * 0.035
+        stop_loss = curr_price - sl_distance                        # -3.5% Base Invalidation Stop Loss (1R Risk)
+        be_trigger = curr_price + (1.25 * sl_distance)               # +4.375% Breakeven Trigger (1.25R)
+        tp1 = curr_price + (3.0 * sl_distance)                      # +10.5% Primary Target (3R Reward)
+        tp2 = curr_price + (4.5 * sl_distance)                      # +15.75% Secondary Runner Target
+        tp3 = curr_price + (6.0 * sl_distance)                      # +21.0% Moonbag Target
 
         levels = {
             "entry_price": curr_price,
             "stop_loss": stop_loss,
+            "be_trigger": be_trigger,
             "take_profit_1": tp1,
             "take_profit_2": tp2,
             "take_profit_3": tp3,

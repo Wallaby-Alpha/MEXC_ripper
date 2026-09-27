@@ -19,6 +19,8 @@ class PaperPosition:
     take_profit_1: float
     take_profit_2: float
     take_profit_3: float
+    be_trigger: float = 0.0
+    be_triggered: bool = False
     size_usdt: float = 1000.0
     current_price: float = field(init=False)
     highest_price: float = field(init=False)
@@ -37,7 +39,7 @@ class PaperPosition:
 
 
 class PaperTrader:
-    """Simulates paper entries with dynamic TP/SL and breakeven trailing."""
+    """Simulates paper entries with dynamic 3R TP/SL and 1.25R breakeven trailing."""
 
     def __init__(
         self,
@@ -56,9 +58,16 @@ class PaperTrader:
         setup_tier: str,
         trade_levels: Dict[str, float],
     ):
-        """Opens a simulated paper trade with dynamic levels if not already in position."""
+        """Opens a simulated paper trade with 3R levels if not already in position."""
         if symbol in self.open_positions:
             return
+
+        sl = trade_levels.get("stop_loss", entry_price * 0.965)
+        sl_dist = entry_price - sl
+        be_trig = trade_levels.get("be_trigger", entry_price + (1.25 * sl_dist))
+        tp1 = trade_levels.get("take_profit_1", entry_price + (3.0 * sl_dist))
+        tp2 = trade_levels.get("take_profit_2", entry_price + (4.5 * sl_dist))
+        tp3 = trade_levels.get("take_profit_3", entry_price + (6.0 * sl_dist))
 
         pos = PaperPosition(
             symbol=symbol,
@@ -66,21 +75,21 @@ class PaperTrader:
             entry_price=entry_price,
             setup_name=setup_name,
             setup_tier=setup_tier,
-            stop_loss=trade_levels.get("stop_loss", entry_price * 0.965),
-            take_profit_1=trade_levels.get("take_profit_1", entry_price * 1.040),
-            take_profit_2=trade_levels.get("take_profit_2", entry_price * 1.080),
-            take_profit_3=trade_levels.get("take_profit_3", entry_price * 1.120),
+            stop_loss=sl,
+            be_trigger=be_trig,
+            take_profit_1=tp1,
+            take_profit_2=tp2,
+            take_profit_3=tp3,
             size_usdt=self.default_size_usdt,
         )
         self.open_positions[symbol] = pos
         logger.info(
-            "[PAPER POSITION OPENED] %s @ $%.6f | SL: $%.6f | TP1: $%.6f (+4.0%%) | TP2: $%.6f ($%.0f USDT virtual)",
+            "[PAPER POSITION OPENED 3R] %s @ $%.6f | SL: $%.6f (-3.5%%) | BE Trigger: $%.6f (+4.38%%) | TP1: $%.6f (+10.5%%)",
             symbol,
             entry_price,
             pos.stop_loss,
+            pos.be_trigger,
             pos.take_profit_1,
-            pos.take_profit_2,
-            self.default_size_usdt,
         )
 
     def update_price(self, symbol: str, current_price: float, timestamp_ms: int):
@@ -98,20 +107,25 @@ class PaperTrader:
             self._close_position(pos, current_price, timestamp_ms, "CLOSED_TIMEOUT (6H TIME STOP)")
             return
 
-        # 2. If TP1 hit (+4.0%), trail stop loss to Breakeven (+0.2% fee coverage)
-        if not pos.tp1_hit and current_price >= pos.take_profit_1:
-            pos.tp1_hit = True
+        # 2. Check Breakeven Trigger: once price hits 1.25x SL (+4.375%), move stop loss to Breakeven (+0.2% fee coverage)
+        if not pos.be_triggered and current_price >= pos.be_trigger:
+            pos.be_triggered = True
             pos.stop_loss = pos.entry_price * 1.002  # Cover fee / breakeven
-            logger.info("[PAPER TRADE TP1 REACHED] %s @ $%.6f (+4.0%%) | Stop trailed to Breakeven", symbol, current_price)
+            logger.info(
+                "[PAPER TRADE BREAKEVEN TRIGGERED] %s reached $%.6f (1.25x SL / +4.38%%) | Stop loss trailed to Breakeven ($%.6f)",
+                symbol,
+                current_price,
+                pos.stop_loss,
+            )
 
-        # 3. Check TP2 (+8.0% runner target)
-        if current_price >= pos.take_profit_2:
-            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP2 (+8.0% TARGET)")
+        # 3. Check Take Profit: 3x SL (+10.5%)
+        if current_price >= pos.take_profit_1:
+            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP1 (3x SL / +10.5% TARGET)")
             return
 
         # 4. Check Stop Loss (or Breakeven stop)
         if current_price <= pos.stop_loss:
-            reason = "CLOSED_BE" if pos.tp1_hit else "CLOSED_SL"
+            reason = "CLOSED_BE" if pos.be_triggered else "CLOSED_SL"
             self._close_position(pos, current_price, timestamp_ms, reason)
             return
 

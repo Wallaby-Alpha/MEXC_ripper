@@ -28,6 +28,7 @@ class WeexExecutor(BaseExecutor):
         self.paper = paper_fallback or PaperExecutor()
         self.resolver = symbol_resolver or WeexSymbolResolver()
         self.active_tpsl_orders: Dict[str, Dict[str, Any]] = {}
+        self.be_trailed_symbols = set()
         self.leverage = int(os.getenv("WEEX_LEVERAGE", "10"))
 
         # Strict safety gate: defaults to False unless explicitly set to 'true' in env
@@ -223,7 +224,21 @@ class WeexExecutor(BaseExecutor):
     def update_price(self, symbol: str, current_price: float, timestamp_ms: int):
         self.paper.update_price(symbol, current_price, timestamp_ms)
 
+        # If Breakeven Trigger (1.25x SL) was reached, update native exchange SL to Breakeven
+        if self.live_enabled and symbol in self.paper.trader.open_positions:
+            pos = self.paper.trader.open_positions[symbol]
+            if getattr(pos, "be_triggered", False) and symbol not in self.be_trailed_symbols:
+                self.be_trailed_symbols.add(symbol)
+                weex_symbol = self.resolver.resolve(symbol) or (symbol if "_" in symbol else symbol.replace("USDT", "_USDT"))
+                be_price_str = self.resolver.format_price(weex_symbol, pos.stop_loss)
+                try:
+                    res = self.client.update_position_tpsl(weex_symbol, sl_price=be_price_str)
+                    logger.info("[WEEX LIVE STOP TRAILED] %s stop trailed to Breakeven ($%s) on exchange: %s", weex_symbol, be_price_str, res)
+                except Exception as tpsl_err:
+                    logger.warning("Could not update WEEX exchange SL to breakeven for %s: %s", weex_symbol, tpsl_err)
+
     def close_position(self, symbol: str, reason: str = "MANUAL_CLOSE") -> Optional[Dict[str, Any]]:
+        self.be_trailed_symbols.discard(symbol)
         if not self.live_enabled:
             return self.paper.close_position(symbol, reason)
 
