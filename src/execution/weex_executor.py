@@ -28,6 +28,7 @@ class WeexExecutor(BaseExecutor):
         self.paper = paper_fallback or PaperExecutor()
         self.resolver = symbol_resolver or WeexSymbolResolver()
         self.active_tpsl_orders: Dict[str, Dict[str, Any]] = {}
+        self.live_positions: Dict[str, Dict[str, Any]] = {}
         self.be_trailed_symbols = set()
         self.leverage = int(os.getenv("WEEX_LEVERAGE", "10"))
 
@@ -196,7 +197,7 @@ class WeexExecutor(BaseExecutor):
 
             logger.info("[WEEX ENTRY FILLED] %s (%s) Order ID: %s", symbol, weex_symbol, main_order_id)
 
-            return {
+            fill_payload = {
                 "status": "FILLED_WEEX_LIVE",
                 "symbol": symbol,
                 "weex_symbol": weex_symbol,
@@ -209,6 +210,8 @@ class WeexExecutor(BaseExecutor):
                 "leverage": self.leverage,
                 "response": order_res,
             }
+            self.live_positions[symbol] = fill_payload
+            return fill_payload
         except Exception as exc:
             logger.error("[WEEX EXECUTION FAILED] %s: %s", symbol, exc)
             return {
@@ -239,6 +242,7 @@ class WeexExecutor(BaseExecutor):
 
     def close_position(self, symbol: str, reason: str = "MANUAL_CLOSE") -> Optional[Dict[str, Any]]:
         self.be_trailed_symbols.discard(symbol)
+        self.live_positions.pop(symbol, None)
         if not self.live_enabled:
             return self.paper.close_position(symbol, reason)
 
@@ -266,7 +270,41 @@ class WeexExecutor(BaseExecutor):
         return self.paper.close_position(symbol, reason)
 
     def get_open_positions(self) -> Dict[str, Any]:
-        return self.paper.get_open_positions()
+        """Returns currently active live positions on WEEX when in live mode."""
+        if not self.live_enabled:
+            return self.paper.get_open_positions()
+
+        # Query live exchange positions from WEEX V3 Contract API
+        try:
+            weex_open = self.client.get_open_positions()
+            live_dict = {}
+            if isinstance(weex_open, list):
+                for p in weex_open:
+                    raw_s = str(p.get("symbol", "")).upper().replace("CMT_", "").replace("_USDT", "USDT")
+                    live_dict[raw_s] = p
+
+            # Reconcile with internally tracked filled positions
+            active_live = {}
+            for s, info in self.live_positions.items():
+                canon = self.resolver.resolve(s) or s
+                canon_clean = canon.upper().replace("CMT_", "").replace("_USDT", "USDT")
+                if canon_clean in live_dict or s in live_dict:
+                    active_live[s] = info
+                elif not weex_open:
+                    # If API query fails or returned empty temporarily, preserve internally tracked
+                    active_live[s] = info
+
+            # Add any live positions found on exchange not yet in active_live
+            for s, p in live_dict.items():
+                if s not in active_live:
+                    active_live[s] = p
+
+            self.live_positions = {k: v for k, v in self.live_positions.items() if k in active_live}
+            return active_live
+        except Exception as exc:
+            logger.warning("Error querying WEEX live positions: %s", exc)
+
+        return self.live_positions
 
     def get_performance_summary(self) -> Dict[str, Any]:
         return self.paper.get_performance_summary()
