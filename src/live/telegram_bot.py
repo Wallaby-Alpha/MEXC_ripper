@@ -128,6 +128,7 @@ class InteractiveTelegramBot:
                 "🚀 *MEXC Momentum Continuation Scanner Bot*\n\n"
                 "*Available Commands:*\n"
                 "📊 `/status` — System health, uptime & monitored coins\n"
+                "⚡ `/weex` — Live WEEX account balance, connection & positions\n"
                 "📈 `/positions` — View active open paper trades & PnL\n"
                 "🏆 `/stats` — Win rate & cumulative performance\n"
                 "🚨 `/alerts` — Recent triggered setup signals\n"
@@ -135,6 +136,37 @@ class InteractiveTelegramBot:
                 "▶️ `/resume` — Unmute live signal alerts"
             )
             self.send_message(help_text)
+
+        elif cmd == "/weex":
+            executor = getattr(self.scanner, "executor", None)
+            if not executor:
+                self.send_message("❌ No executor attached to this scanner instance.")
+                return
+
+            if not getattr(executor, "live_enabled", False):
+                self.send_message("📝 *WEEX Status*: Bot is running in **DRY-RUN / PAPER MODE** (live capital execution is disabled).")
+                return
+
+            ok, msg = executor.verify_connection()
+            if not ok:
+                self.send_message(f"🚨 *WEEX API Error*: {msg}\nPlease check your WEEX API credentials in `.env`.")
+                return
+
+            live_pos = executor.get_open_positions()
+            pos_count = len(live_pos) if isinstance(live_pos, (dict, list)) else 0
+            lines = [
+                "⚡ *WEEX Live Exchange Status*",
+                "",
+                f"• *Connection*: 🟢 Active & Authenticated",
+                f"• *{msg}*",
+                f"• *Live Open Positions on WEEX*: `{pos_count} / 4`",
+            ]
+            if isinstance(live_pos, dict) and live_pos:
+                lines.append("\n*Open Contracts on WEEX:*")
+                for s, p in live_pos.items():
+                    sz = p.get("total") or p.get("size") or p.get("holdAmount") or "N/A"
+                    lines.append(f"  • `{s}`: size `{sz}`")
+            self.send_message("\n".join(lines))
 
         elif cmd == "/status":
             uptime_min = int((time.time() - self.start_time) / 60)

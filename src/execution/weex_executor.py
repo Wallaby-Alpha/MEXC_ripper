@@ -1,7 +1,7 @@
 """WEEX execution bridge implementing BaseExecutor with strict live-trading safety gate."""
 import os
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from src.execution.base_executor import BaseExecutor
 from src.execution.weex_client import WeexClient
 from src.execution.paper_executor import PaperExecutor
@@ -41,6 +41,32 @@ class WeexExecutor(BaseExecutor):
             logger.info("WEEX Executor initialized in DRY-RUN / PAPER MODE (Zero live capital risk).")
         else:
             logger.warning("WEEX Executor initialized in LIVE CAPITAL TRADING MODE (Leverage: %dx Isolated) with Native Exchange TP/SL enforcement!", self.leverage)
+            ok, msg = self.verify_connection()
+            if ok:
+                logger.info("[WEEX LIVE CONNECTION VERIFIED] %s", msg)
+            else:
+                logger.error("[WEEX LIVE CONNECTION ERROR] %s", msg)
+
+    def verify_connection(self) -> Tuple[bool, str]:
+        """Tests live API connectivity and returns equity balance or error message."""
+        if not self.live_enabled:
+            return True, "DRY-RUN / PAPER MODE"
+        if not self.client.api_key:
+            return False, "WEEX_API_KEY is missing or empty in .env"
+        try:
+            res = self.client.get_account_assets(is_contract=True)
+            data = res.get("data", res) if isinstance(res, dict) else res
+            balance_str = "0.00"
+            if isinstance(data, list) and data:
+                for b in data:
+                    if isinstance(b, dict) and b.get("asset") == "USDT":
+                        balance_str = str(b.get("equity") or b.get("available") or b.get("balance") or "0.00")
+                        break
+            elif isinstance(data, dict):
+                balance_str = str(data.get("equity") or data.get("available") or data.get("balance") or "0.00")
+            return True, f"Connected to WEEX V3 Contract API | Equity: ${balance_str} USDT"
+        except Exception as exc:
+            return False, f"Connection Failed: {exc}"
 
     def open_position(
         self,
