@@ -198,23 +198,30 @@ class AlertDispatcher:
         status = exec_res.get("status", "")
         order_id = exec_res.get("order_id")
         sl = levels.get("stop_loss", entry_price * 0.965)
-        tp1 = levels.get("take_profit_1", entry_price * 1.035)
+        tp = levels.get("take_profit_1", levels.get("take_profit", entry_price * 1.105))
+        be = levels.get("be_trigger", entry_price * 1.04375)
 
         margin = exec_res.get("size_usdt") or margin_usdt or 1.0
         leverage = exec_res.get("leverage", 10)
         notional = exec_res.get("notional_usdt") or (margin * leverage)
-        expected_pnl = margin * 0.35  # +35% return on margin at +3.5% price target
+        sl_pct = abs((sl - entry_price) / entry_price) * 100.0
+        tp_pct = ((tp - entry_price) / entry_price) * 100.0
+        be_pct = ((be - entry_price) / entry_price) * 100.0
+        risk_usdt = margin * (sl_pct / 10.0)      # -35% on 10x margin at -3.5% SL
+        expected_pnl = margin * (tp_pct / 10.0)   # +105% on 10x margin at +10.5% 3R TP
 
         # 1. Genuine Exchange Fill Confirmation
         if status == "FILLED_WEEX_LIVE" and order_id and order_id != "N/A":
             msg = (
-                f"⚡ *WEEX LIVE ORDER FILLED* ⚡\n"
+                f"⚡ *WEEX LIVE ORDER FILLED (3R STRATEGY)* ⚡\n"
                 f"• *Contract*: `{weex_sym}` (MEXC: `{symbol}`)\n"
                 f"• *Side*: `BUY / LONG` @ `{leverage}x Isolated`\n"
                 f"• *Entry Fill*: `${entry_price:.6f}`\n"
                 f"• *Margin Allocated*: `${margin:.2f} USDT` (`${notional:.2f}` Notional)\n\n"
-                f"🛑 *Native Stop Loss*: `${sl:.6f}` (-3.5% | -${expected_pnl:.2f})\n"
-                f"🎯 *Native Take Profit*: `${tp1:.6f}` (+3.5% | +${expected_pnl:.2f})\n"
+                f"🛑 *Native Stop Loss (1R)*: `${sl:.6f}` (-{sl_pct:.1f}% | -${risk_usdt:.2f})\n"
+                f"🛡️ *Breakeven Trigger (1.25R)*: `${be:.6f}` (+{be_pct:.2f}% | Trails SL to BE)\n"
+                f"🎯 *Native Take Profit (3R Target)*: `${tp:.6f}` (+{tp_pct:.1f}% | +${expected_pnl:.2f} | 100% Exit)\n"
+                f"⚖️ *Risk / Reward Ratio*: `1 : 3.0`\n"
                 f"📋 *Exchange Order ID*: `{order_id}`\n"
                 f"🔒 *Exchange Protection*: `Native TP/SL Attached`"
             )
@@ -244,12 +251,14 @@ class AlertDispatcher:
         # 4. Paper / Dry-Run Mode
         else:
             msg = (
-                f"📝 *PAPER POSITION OPENED (Simulated)*\n"
+                f"📝 *PAPER POSITION OPENED (3R STRATEGY)*\n"
                 f"• *Symbol*: `{symbol}`\n"
                 f"• *Simulated Margin*: `${margin:.2f} USDT` @ `{leverage}x Isolated` (`${notional:.2f}` Notional)\n"
                 f"• *Entry*: `${entry_price:.6f}`\n"
-                f"• *Stop Loss*: `${sl:.6f}` (-3.5%)\n"
-                f"• *Target 1*: `${tp1:.6f}` (+3.5%)\n\n"
+                f"• *Stop Loss (1R)*: `${sl:.6f}` (-{sl_pct:.1f}%)\n"
+                f"• *Breakeven Trigger (1.25R)*: `${be:.6f}` (+{be_pct:.2f}%)\n"
+                f"• *Take Profit (3R Target)*: `${tp:.6f}` (+{tp_pct:.1f}% | 100% Exit)\n"
+                f"⚖️ *Risk / Reward Ratio*: `1 : 3.0`\n\n"
                 f"ℹ️ *Paper trading mode active (Zero real capital risk).*"
             )
 

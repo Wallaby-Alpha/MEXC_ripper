@@ -428,7 +428,16 @@ def run_target_comparison_study(
 
     profiles = [
         {
-            "name": "1. Baseline (Original +9%/+15%, SL -5.5%, 24h)",
+            "name": "1. 3R Single Target Strategy (+10.5% 3R TP, BE Trigger +4.38%, SL -3.5%, 100% Exit, 6h)",
+            "tp1_pct": 0.105,
+            "tp2_pct": 0.105,
+            "sl_pct": 0.035,
+            "partial_tp1_ratio": 1.0,  # 100% exit at 3R
+            "time_stop_hours": 6.0,
+            "filter_archetype": None,
+        },
+        {
+            "name": "2. Baseline (Original +9%/+15%, SL -5.5%, 24h)",
             "tp1_pct": 0.09,
             "tp2_pct": 0.15,
             "sl_pct": 0.055,

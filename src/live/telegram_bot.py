@@ -171,14 +171,16 @@ class InteractiveTelegramBot:
                 peak = ((pos.highest_price - pos.entry_price) / pos.entry_price) * 100.0
                 pnl_emoji = "🟢" if ret >= 0 else "🔴"
 
+                be_str = "TRAILED TO BE (+0.2%)" if getattr(pos, "be_triggered", False) else f"${getattr(pos, 'be_trigger', 0.0):.6f} (+4.38%)"
                 lines.append(
                     f"{pnl_emoji} *{sym}* ({pos.setup_name})\n"
                     f"  • Entry: `${pos.entry_price:.6f}`\n"
                     f"  • Current: `${pos.current_price:.6f}` (*{ret:+.2f}%*)\n"
-                    f"  • Peak Run: `+{peak:.2f}%`\n"
-                    f"  • Stop Loss: `${pos.stop_loss:.6f}` (-3.5%)\n"
-                    f"  • Target 1 (+3.5%): `${pos.take_profit_1:.6f}`\n"
-                    f"  • Target 2 (+7.5%): `${pos.take_profit_2:.6f}`\n"
+                    f"  • Peak Run (MFE): `+{peak:.2f}%`\n"
+                    f"  • Stop Loss (1R): `${pos.stop_loss:.6f}` (-3.5%)\n"
+                    f"  • BE Trigger (1.25R): `{be_str}`\n"
+                    f"  • Take Profit (3R Target): `${pos.take_profit_1:.6f}` (+10.5% | 100% Exit)\n"
+                    f"  • Risk / Reward: `1 : 3.0`\n"
                 )
             self.send_message("\n".join(lines))
 
@@ -213,13 +215,17 @@ class InteractiveTelegramBot:
                     self.send_message("💤 No Pre-Breakout Alpha alerts recorded yet.")
                     return
 
-                out = ["🚨 *Last 5 Triggered Pre-Breakout Setups:*", ""]
+                out = ["🚨 *Last 5 Triggered Pre-Breakout Setups (3R Strategy):*", ""]
                 for a in reversed(recent):
+                    lvl = a.get("levels", {})
+                    tp_val = lvl.get("take_profit_1") or lvl.get("take_profit", 0)
                     out.append(
                         f"• *{a['symbol']}* ({a.get('setup_tier', 'TIER 1 (ALPHA SETUP)')})\n"
                         f"  Time: `{a['timestamp']}` | Score: `{a['score']:.0f}/100`\n"
-                        f"  Price: `${a.get('levels', {}).get('entry_price', a.get('close', 0)):.6f}`\n"
-                        f"  TP1 (+3.5%): `${a.get('levels', {}).get('take_profit_1', 0):.6f}` | SL (-3.5%): `${a.get('levels', {}).get('stop_loss', 0):.6f}`\n"
+                        f"  Price: `${lvl.get('entry_price', a.get('close', 0)):.6f}`\n"
+                        f"  🎯 Take Profit (3R): `${tp_val:.6f}` (+10.5% | 100% Exit)\n"
+                        f"  🛡️ BE Trigger (1.25R): `${lvl.get('be_trigger', 0):.6f}` (+4.38%)\n"
+                        f"  🛑 Stop Loss (1R): `${lvl.get('stop_loss', 0):.6f}` (-3.5% | R:R 1:3.0)\n"
                     )
                 self.send_message("\n".join(out))
             except Exception as exc:
