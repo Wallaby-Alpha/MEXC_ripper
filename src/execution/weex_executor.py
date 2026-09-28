@@ -197,13 +197,66 @@ class WeexExecutor(BaseExecutor):
 
             logger.info("[WEEX ENTRY FILLED] %s (%s) Order ID: %s", symbol, weex_symbol, main_order_id)
 
+            tp_order_id = "ATTACHED_ON_ENTRY"
+            sl_order_id = "ATTACHED_ON_ENTRY"
+
+            # 2. Register native Position TP/SL on exchange so WEEX UI displays the +10.5% and -3.5% lines
+            try:
+                pos_ok = self.client.set_position_tpsl(
+                    symbol=weex_symbol,
+                    position_side=pos_side,
+                    tp_price=tp_price_str,
+                    sl_price=sl_price_str,
+                )
+                logger.info("[WEEX POSITION TP/SL] %s TP: $%s (+10.5%%), SL: $%s (-3.5%%) -> %s", weex_symbol, tp_price_str, sl_price_str, "SUCCESS" if pos_ok else "FAILED")
+            except Exception as pos_err:
+                logger.warning("Could not set position TP/SL via /capi/v3/order/tpsl: %s", pos_err)
+
+            # 3. Also place native conditional Trigger Orders on exchange (shows under Trigger/Plan Orders on WEEX)
+            try:
+                tp_res = self.client.place_tpsl_order(
+                    symbol=weex_symbol,
+                    plan_type="TAKE_PROFIT",
+                    trigger_price=tp_price_str,
+                    size=qty_str,
+                    position_side=pos_side,
+                )
+                if isinstance(tp_res, dict) and (tp_res.get("orderId") or (isinstance(tp_res.get("data"), dict) and tp_res["data"].get("orderId"))):
+                    tp_oid = str(tp_res.get("orderId") or tp_res["data"]["orderId"])
+                    tp_order_id = tp_oid
+                    logger.info("[WEEX NATIVE TP 3R REGISTERED] %s Take Profit (+10.5%%) trigger order active @ $%s (Order ID: %s)", weex_symbol, tp_price_str, tp_oid)
+            except Exception as tp_err:
+                logger.warning("Dedicated TP trigger order failed: %s", tp_err)
+
+            try:
+                sl_res = self.client.place_tpsl_order(
+                    symbol=weex_symbol,
+                    plan_type="STOP_LOSS",
+                    trigger_price=sl_price_str,
+                    size=qty_str,
+                    position_side=pos_side,
+                )
+                if isinstance(sl_res, dict) and (sl_res.get("orderId") or (isinstance(sl_res.get("data"), dict) and sl_res["data"].get("orderId"))):
+                    sl_oid = str(sl_res.get("orderId") or sl_res["data"]["orderId"])
+                    sl_order_id = sl_oid
+                    logger.info("[WEEX NATIVE SL 1R REGISTERED] %s Stop Loss (-3.5%%) trigger order active @ $%s (Order ID: %s)", weex_symbol, sl_price_str, sl_oid)
+            except Exception as sl_err:
+                logger.warning("Dedicated SL trigger order failed: %s", sl_err)
+
+            self.active_tpsl_orders[symbol] = {
+                "tp_order_id": tp_order_id,
+                "sl_order_id": sl_order_id,
+                "tp_price": tp_price_str,
+                "sl_price": sl_price_str,
+            }
+
             fill_payload = {
                 "status": "FILLED_WEEX_LIVE",
                 "symbol": symbol,
                 "weex_symbol": weex_symbol,
                 "order_id": main_order_id,
-                "native_tp_order_id": "ATTACHED_ON_ENTRY",
-                "native_sl_order_id": "ATTACHED_ON_ENTRY",
+                "native_tp_order_id": tp_order_id,
+                "native_sl_order_id": sl_order_id,
                 "weex_live": True,
                 "size_usdt": actual_margin,
                 "notional_usdt": actual_notional,

@@ -285,6 +285,7 @@ class WeexClient:
 
         payload = {
             "symbol": symbol,
+            "clientAlgoId": tpsl_oid,
             "clientOrderId": tpsl_oid,
             "newClientOrderId": tpsl_oid,
             "planType": plan_type.upper(),
