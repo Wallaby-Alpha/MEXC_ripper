@@ -109,6 +109,12 @@ def main():
     dispatcher = AlertDispatcher(alpha_only=args.alpha_only)
     paper_trader = PaperTrader(default_size_usdt=trade_size)
     weex_executor = WeexExecutor(live_enabled=weex_live)
+    if weex_live:
+        ok, msg = weex_executor.verify_connection()
+        if ok:
+            console.print(f"[bold green]✓ WEEX Live Connected: {msg}[/bold green]")
+        else:
+            console.print(f"[bold red blink]✗ WEEX Connection Error: {msg}[/bold red blink]\n[yellow]Check WEEX_API_KEY, WEEX_API_SECRET, and WEEX_PASSPHRASE in your .env file![/yellow]")
 
     scanner = LiveMomentumScanner(
         dispatcher=dispatcher,

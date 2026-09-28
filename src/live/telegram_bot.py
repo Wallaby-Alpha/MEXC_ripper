@@ -128,6 +128,7 @@ class InteractiveTelegramBot:
                 "🚀 *MEXC Momentum Continuation Scanner Bot*\n\n"
                 "*Available Commands:*\n"
                 "📊 `/status` — System health, uptime & monitored coins\n"
+                "⚡ `/weex` — Live WEEX account balance, connection & positions\n"
                 "📈 `/positions` — View active open paper trades & PnL\n"
                 "🏆 `/stats` — Win rate & cumulative performance\n"
                 "🚨 `/alerts` — Recent triggered setup signals\n"
@@ -135,6 +136,37 @@ class InteractiveTelegramBot:
                 "▶️ `/resume` — Unmute live signal alerts"
             )
             self.send_message(help_text)
+
+        elif cmd == "/weex":
+            executor = getattr(self.scanner, "executor", None)
+            if not executor:
+                self.send_message("❌ No executor attached to this scanner instance.")
+                return
+
+            if not getattr(executor, "live_enabled", False):
+                self.send_message("📝 *WEEX Status*: Bot is running in **DRY-RUN / PAPER MODE** (live capital execution is disabled).")
+                return
+
+            ok, msg = executor.verify_connection()
+            if not ok:
+                self.send_message(f"🚨 *WEEX API Error*: {msg}\nPlease check your WEEX API credentials in `.env`.")
+                return
+
+            live_pos = executor.get_open_positions()
+            pos_count = len(live_pos) if isinstance(live_pos, (dict, list)) else 0
+            lines = [
+                "⚡ *WEEX Live Exchange Status (3R Bot)*",
+                "",
+                f"• *Connection*: 🟢 Active & Authenticated",
+                f"• *{msg}*",
+                f"• *Live Open Positions on WEEX*: `{pos_count} / 4`",
+            ]
+            if isinstance(live_pos, dict) and live_pos:
+                lines.append("\n*Open Contracts on WEEX:*")
+                for s, p in live_pos.items():
+                    sz = p.get("total") or p.get("size") or p.get("holdAmount") or "N/A"
+                    lines.append(f"  • `{s}`: size `{sz}`")
+            self.send_message("\n".join(lines))
 
         elif cmd == "/status":
             uptime_min = int((time.time() - self.start_time) / 60)
@@ -146,12 +178,12 @@ class InteractiveTelegramBot:
             strat_desc = "🌟 *Tier 1 Alpha Only* (`PRE_BREAKOUT_ACCUMULATION`)" if is_alpha_only else "🌐 *All Setups*"
             exec_mode = f"⚡ *WEEX Live* (10x Isolated, ${margin_val:.2f} Margin, Native TP/SL)" if (getattr(self.scanner, "executor", None) and getattr(self.scanner.executor, "live_enabled", False)) else "📝 *Paper Trading* (Zero Risk)"
             status_text = (
-                "⚡ *Scanner Operational Status*\n\n"
+                "⚡ *Scanner Operational Status (3R Edition)*\n\n"
                 f"• *Status*: {'⏸ Paused' if self.is_paused else '🟢 Active & Scanning'}\n"
                 f"• *Strategy Filter*: {strat_desc}\n"
                 f"• *Telegram Filter*: 🔒 `Alpha Setups Only (65.2% WR, 2.36 PF)`\n"
                 f"• *Execution*: {exec_mode}\n"
-                f"• *Targets*: 🎯 `TP1 +3.5% (+35% at 10x)` | 🛑 `SL -3.5%`\n"
+                f"• *Targets*: 🎯 `TP +10.5% (3R Target | 100% Exit)` | 🛡️ `BE Trigger +4.38% (1.25R)` | 🛑 `SL -3.5% (1R)`\n"
                 f"• *Interval*: `{self.scanner.interval}`\n"
                 f"• *Uptime*: `{uptime_min} minutes`\n"
                 f"• *Open Trades*: `{len(self.scanner.paper_trader.open_positions)}`\n"
