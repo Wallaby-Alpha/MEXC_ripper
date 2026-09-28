@@ -23,6 +23,7 @@ from src.data_ingestion.mexc_client import MexcClient
 from src.features.feature_pipeline import extract_features_point_in_time
 from src.live.alerting import AlertDispatcher
 from src.live.paper_trader import PaperTrader
+from src.live.market_regime import MarketRegimeGate, MarketRegimeResult
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class LiveMomentumScanner:
         min_24h_turnover: float = DEFAULT_MIN_24H_TURNOVER_USDT,
         min_score: float = 80.0,
         alpha_only: bool = True,
+        regime_gate: Optional[MarketRegimeGate] = None,
     ):
         self.client = client or MexcClient()
         self.dispatcher = dispatcher or AlertDispatcher()
@@ -51,6 +53,8 @@ class LiveMomentumScanner:
         self.min_24h_turnover = min_24h_turnover
         self.min_score = min_score
         self.alpha_only = alpha_only
+        self.regime_gate = regime_gate or MarketRegimeGate()
+        self.current_regime: Optional[MarketRegimeResult] = None
         self.seen_alerts: Dict[str, int] = {}  # 2-hour cooldown tracker (ms)
         self.trade_history_timestamps: List[int] = []  # 15-minute cluster rate limiter
 
@@ -60,11 +64,40 @@ class LiveMomentumScanner:
         dt_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         logger.info("Executing live scan cycle at %s", dt_str)
 
-        # 1. Fetch benchmark bars for relative strength
+        # 1. Fetch benchmark bars for relative strength and market regime
         btc_bars = self.client.get_klines("BTCUSDT", interval=self.interval, limit=80)
         eth_bars = self.client.get_klines("ETHUSDT", interval=self.interval, limit=80)
         btc_df = self._bars_to_df(btc_bars)
         eth_df = self._bars_to_df(eth_bars)
+
+        # Market Regime Gate Evaluation (Dynamic Tier Filtering)
+        regime = self.regime_gate.evaluate(btc_df, base_min_score=self.min_score)
+        self.current_regime = regime
+        effective_min_score = regime.effective_min_score
+
+        # Hard Circuit Breaker: If BTC is in a sharp dump/flush, pause new entries immediately
+        if not regime.allowed:
+            logger.warning("[REGIME GATE: CIRCUIT BREAKER TRIGGERED] ⛔ %s. Pausing all new entries.", regime.reason)
+            # Update prices for active positions so stop loss / trailing BE continue monitoring
+            open_symbols = set()
+            if self.paper_trader and hasattr(self.paper_trader, "open_positions"):
+                open_symbols.update(self.paper_trader.open_positions.keys())
+            if self.executor and hasattr(self.executor, "live_positions"):
+                open_symbols.update(self.executor.live_positions.keys())
+            for sym in open_symbols:
+                try:
+                    bars = self.client.get_klines(sym, interval=self.interval, limit=5)
+                    if bars:
+                        curr_p = float(bars[-1][4])
+                        self.paper_trader.update_price(sym, curr_p, now_ms)
+                        if self.executor:
+                            self.executor.update_price(sym, curr_p, now_ms)
+                except Exception:
+                    pass
+            return []
+
+        if regime.regime == "CAUTION_PULLBACK":
+            logger.info("[REGIME GATE: CAUTION ACTIVE] ⚠️ %s", regime.reason)
 
         # 2. Get active tradeable altcoins clearing liquidity floor
         tickers = self.client.get_ticker_24hr()
@@ -147,7 +180,12 @@ class LiveMomentumScanner:
                 # Validate setup against Phase 1 empirical findings
                 is_valid, setup_name, setup_tier, score, reasons, levels = self._evaluate_setup_quality(feats, curr_price)
 
-                if is_valid and score >= self.min_score:
+                if is_valid:
+                    if score < effective_min_score:
+                        if regime.regime == "CAUTION_PULLBACK":
+                            logger.info("[FILTERED - REGIME CAUTION] %s score %.1f passed base (%.1f) but held by elevated regime threshold (%.1f)", sym, score, self.min_score, effective_min_score)
+                        continue
+
                     # Risk Collar 1: Maximum Concurrent Open Positions
                     # In live mode, strictly count actual live positions entered on WEEX
                     if self.executor and getattr(self.executor, "live_enabled", False):

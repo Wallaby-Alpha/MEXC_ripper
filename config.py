@@ -66,3 +66,10 @@ MIN_RVOL_FLOOR = 1.5               # Minimum relative volume for valid entry
 MIN_ALERT_SCORE = 85.0             # High-probability signal score threshold
 DEFAULT_MARGIN_USDT = 1.0          # $1.00 margin @ 10x leverage = $10.00 notional USD
 
+# Market Regime Gate Configuration (Dynamic Tier Protection)
+ENABLE_MARKET_REGIME_GATE = os.getenv("ENABLE_REGIME_GATE", "true").lower() == "true"
+BTC_DUMP_1H_THRESHOLD_PCT = float(os.getenv("BTC_DUMP_1H_PCT", "-1.0"))     # Hard pause if BTC drops > 1.0% in 1h
+BTC_DUMP_15M_THRESHOLD_PCT = float(os.getenv("BTC_DUMP_15M_PCT", "-0.6"))   # Hard pause if BTC drops > 0.6% in 15m
+BTC_CAUTION_SCORE_PENALTY = float(os.getenv("BTC_CAUTION_SCORE_PENALTY", "10.0"))  # Elevate min-score from 80 -> 90 during pullback
+BTC_RSI_FLOOR_PANIC = float(os.getenv("BTC_RSI_FLOOR_PANIC", "38.0"))       # Severe oversold breakdown
+
