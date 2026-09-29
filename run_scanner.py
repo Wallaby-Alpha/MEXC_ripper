@@ -18,6 +18,7 @@ from src.live.alerting import AlertDispatcher
 from src.live.paper_trader import PaperTrader
 from src.live.telegram_bot import InteractiveTelegramBot
 from src.execution.weex_executor import WeexExecutor
+from src.live.market_regime import MarketRegimeGate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,10 +32,10 @@ console = Console()
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="MEXC Live Altcoin Momentum Continuation Scanner")
+    parser = argparse.ArgumentParser(description="OPTObot-v4 Live Momentum Continuation Scanner")
     parser.add_argument("--interval", type=str, default=DEFAULT_INTERVAL, help="Candle interval (default: 5m)")
     parser.add_argument("--poll-sec", type=int, default=60, help="Polling delay between cycles in seconds (default: 60)")
-    parser.add_argument("--min-turnover", type=float, default=DEFAULT_MIN_24H_TURNOVER_USDT, help="Min 24h quote volume (default: $50,000)")
+    parser.add_argument("--min-turnover", type=float, default=DEFAULT_MIN_24H_TURNOVER_USDT, help="Min 24h quote volume (default: $150,000)")
     parser.add_argument("--top-coins", type=int, default=40, help="Number of liquid altcoins to scan per cycle (default: 40)")
     parser.add_argument("--min-score", type=float, default=80.0, help="Minimum setup score to alert (default: 80.0)")
     parser.add_argument("--iterations", type=int, default=None, help="Number of scan cycles to run (default: infinite)")
@@ -44,6 +45,7 @@ def parse_args():
     parser.add_argument("--alpha-only", action="store_true", default=True, help="Strictly filter for Tier 1 Pre-Breakout Accumulation setups (PF 2.36, 65.2% Win Rate)")
     parser.add_argument("--all-setups", dest="alpha_only", action="store_false", help="Allow secondary breakout chase setups")
     parser.add_argument("--trade-size", type=float, default=None, help="Margin size in USDT (default: $1.00 margin = $10 notional @ 10x)")
+    parser.add_argument("--no-regime-gate", action="store_true", help="Disable dynamic BTC Market Regime Gate")
     return parser.parse_args()
 
 
@@ -93,11 +95,13 @@ def main():
 
     console.print(
         Panel.fit(
-            f"[bold green]MEXC Live Momentum Continuation Scanner - OPTIMIZED EDITION v2.0[/bold green]\n"
+            f"[bold green]MEXC Live Momentum Scanner - OPTOBOT-v4 (1.5R Fixed Single Target)[/bold green]\n"
             f"Interval: [yellow]{args.interval}[/yellow] | Scan Batch: [cyan]{args.top_coins} liquid alts[/cyan] | Delay: [white]{args.poll_sec}s[/white]\n"
             f"Strategy Filter: [bold green]{strategy_mode}[/bold green]\n"
             f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Margin Size: [bold yellow]${trade_size:,.2f} USDT ($10 Notional @ 10x)[/bold yellow]\n"
-            f"Optimizations Active: [bold cyan]Toxic Blacklist (7 coins), RVOL Ceiling (8.0x), RSI Ceiling (68.0), Max 3 Concurrent Pos, Max 2 Trades/15m[/bold cyan]\n"
+            f"Target Profile: [bold cyan]Stop Loss: -3.5% (1.0R) | Native Take Profit: +5.25% (1.5R Single Target)[/bold cyan]\n"
+            f"Regime Gate: [bold green]{'ENABLED (Dynamic Tier: Pause on Flush, 90 Score on Pullback)' if not args.no_regime_gate else 'DISABLED'}[/bold green]\n"
+            f"Min Turnover: [cyan]${args.min_turnover:,.0f} 24h volume floor (Slippage Guard)[/cyan]\n"
             f"Execution Mode: [{'bold red blink' if weex_live else 'bold yellow'}]{exec_mode}[/{'bold red blink' if weex_live else 'bold yellow'}] | Telegram Bot: [{'bold green}ENABLED' if tg_token and not args.no_telegram else 'dim red'}DISABLED{'/bold green' if tg_token and not args.no_telegram else '/dim red'}]",
             border_style="cyan",
         )
@@ -113,6 +117,7 @@ def main():
         else:
             console.print(f"[bold red blink]✗ WEEX Connection Error: {msg}[/bold red blink]\n[yellow]Check WEEX_API_KEY, WEEX_API_SECRET, and WEEX_PASSPHRASE in your .env file![/yellow]")
 
+    regime_gate = MarketRegimeGate(enabled=not args.no_regime_gate)
     scanner = LiveMomentumScanner(
         dispatcher=dispatcher,
         paper_trader=paper_trader,
@@ -122,6 +127,7 @@ def main():
         min_24h_turnover=args.min_turnover,
         min_score=args.min_score,
         alpha_only=args.alpha_only,
+        regime_gate=regime_gate,
     )
 
     # Initialize interactive Telegram Bot if credentials are configured

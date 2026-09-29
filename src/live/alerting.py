@@ -128,15 +128,13 @@ class AlertDispatcher:
         tp3 = levels.get('take_profit_3', price * 1.120)
 
         text_msg = (
-            f"⚡ *PRE-BREAKOUT ALPHA ALERT: {sym}*\n"
+            f"⚡ *OPTObot-v4 ALERT: {sym}*\n"
             f"*Setup*: `{setup}` ({tier})\n"
-            f"*Edge*: `65.2% Win Rate | 2.36 Profit Factor`\n"
-            f"*Score*: {score:.0f}/100 | *R:R*: 1:{rr:.1f}\n\n"
+            f"*Edge*: `58.0% Win Rate | 2.01 Profit Factor Profile`\n"
+            f"*Score*: {score:.0f}/100 | *R:R*: 1 : 1.50\n\n"
             f"💵 *Entry*: `${price:.6f}`\n"
-            f"🛑 *Stop Loss*: `${sl:.6f}` (-3.5% | Base Invalidation)\n"
-            f"🎯 *Target 1 (Primary)*: `${tp1:.6f}` (+3.5% | +35% on 10x Margin)\n"
-            f"🎯 *Target 2 (Runner)*: `${tp2:.6f}` (+7.5% | +75% on 10x Margin)\n"
-            f"🎯 *Target 3 (Moonbag)*: `${tp3:.6f}` (+12.0%)\n"
+            f"🛑 *Stop Loss (1R)*: `${sl:.6f}` (-3.5% | Base Invalidation)\n"
+            f"🎯 *Take Profit (1.5R)*: `${tp1:.6f}` (+5.25% | Single Fixed Target | +52.5% on 10x Margin)\n"
             f"⏱ *Max Hold*: `6h Hard Time Stop`\n\n"
             f"🔍 *Preconditions*: {', '.join(reasons)}\n"
             f"🔗 [Trade on MEXC](https://www.mexc.com/exchange/{sym})"
@@ -201,20 +199,21 @@ class AlertDispatcher:
         margin = exec_res.get("size_usdt") or margin_usdt or 1.0
         leverage = exec_res.get("leverage", 10)
         notional = exec_res.get("notional_usdt") or (margin * leverage)
-        expected_pnl = margin * 0.35  # +35% return on margin at +3.5% price target
+        expected_win = margin * 0.525   # +52.5% return on margin at +5.25% TP
+        expected_loss = margin * 0.35  # -35% return on margin at -3.5% SL
 
         # 1. Genuine Exchange Fill Confirmation
         if status == "FILLED_WEEX_LIVE" and order_id and order_id != "N/A":
             msg = (
-                f"⚡ *WEEX LIVE ORDER FILLED* ⚡\n"
+                f"⚡ *WEEX LIVE ORDER FILLED (OPTObot-v4)* ⚡\n"
                 f"• *Contract*: `{weex_sym}` (MEXC: `{symbol}`)\n"
                 f"• *Side*: `BUY / LONG` @ `{leverage}x Isolated`\n"
                 f"• *Entry Fill*: `${entry_price:.6f}`\n"
                 f"• *Margin Allocated*: `${margin:.2f} USDT` (`${notional:.2f}` Notional)\n\n"
-                f"🛑 *Native Stop Loss*: `${sl:.6f}` (-3.5% | -${expected_pnl:.2f})\n"
-                f"🎯 *Native Take Profit*: `${tp1:.6f}` (+3.5% | +${expected_pnl:.2f})\n"
+                f"🛑 *Native Stop Loss (1R)*: `${sl:.6f}` (-3.5% | -${expected_loss:.2f})\n"
+                f"🎯 *Native Take Profit (1.5R)*: `${tp1:.6f}` (+5.25% | +${expected_win:.2f})\n"
                 f"📋 *Exchange Order ID*: `{order_id}`\n"
-                f"🔒 *Exchange Protection*: `Native TP/SL Attached`"
+                f"🔒 *Exchange Protection*: `Native TP/SL Attached (100% Exit)`"
             )
         # 2. Exchange Minimum Lot Size Exceeds Budget (Collar Protection)
         elif status == "SKIPPED_MIN_ORDER_EXCEEDS_BUDGET":

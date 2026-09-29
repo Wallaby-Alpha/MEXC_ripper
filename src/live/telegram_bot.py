@@ -177,13 +177,29 @@ class InteractiveTelegramBot:
                 margin_val = 1.0
             strat_desc = "🌟 *Tier 1 Alpha Only* (`PRE_BREAKOUT_ACCUMULATION`)" if is_alpha_only else "🌐 *All Setups*"
             exec_mode = f"⚡ *WEEX Live* (10x Isolated, ${margin_val:.2f} Margin, Native TP/SL)" if (getattr(self.scanner, "executor", None) and getattr(self.scanner.executor, "live_enabled", False)) else "📝 *Paper Trading* (Zero Risk)"
+            
+            regime = getattr(self.scanner, "current_regime", None)
+            regime_line = ""
+            if regime and hasattr(regime, "regime"):
+                try:
+                    regime_name = str(regime.regime)
+                    regime_icon = "🟢" if regime_name == "BULLISH" else ("🟡" if regime_name == "CAUTION_PULLBACK" else "🔴")
+                    p_val = float(getattr(regime, "btc_price", 0.0))
+                    chg_val = float(getattr(regime, "btc_1h_change_pct", 0.0))
+                    score_val = float(getattr(regime, "effective_min_score", 80.0))
+                    regime_line = f"• *Market Regime*: {regime_icon} `{regime_name}` (BTC: `${p_val:,.0f}` | 1h: `{chg_val:+.2f}%` | Min Score: `{score_val:.0f}`)\n"
+                except Exception:
+                    regime_line = ""
+
             status_text = (
-                "⚡ *Scanner Operational Status*\n\n"
+                "⚡ *OPTObot-v4 Operational Status*\n\n"
                 f"• *Status*: {'⏸ Paused' if self.is_paused else '🟢 Active & Scanning'}\n"
+                f"{regime_line}"
                 f"• *Strategy Filter*: {strat_desc}\n"
-                f"• *Telegram Filter*: 🔒 `Alpha Setups Only (65.2% WR, 2.36 PF)`\n"
+                f"• *Telegram Filter*: 🔒 `Alpha Setups Only (58.0% WR, 2.01 PF)`\n"
                 f"• *Execution*: {exec_mode}\n"
-                f"• *Targets*: 🎯 `TP1 +3.5% (+35% at 10x)` | 🛑 `SL -3.5%`\n"
+                f"• *Targets*: 🎯 `TP +5.25% (1.5R Single Target | 100% Exit)` | 🛑 `SL -3.5% (1R)`\n"
+                f"• *Risk / Reward*: `1 : 1.50`\n"
                 f"• *Interval*: `{self.scanner.interval}`\n"
                 f"• *Uptime*: `{uptime_min} minutes`\n"
                 f"• *Open Trades*: `{len(self.scanner.paper_trader.open_positions)}`\n"

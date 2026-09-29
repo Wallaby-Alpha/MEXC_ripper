@@ -23,7 +23,8 @@ MEXC_SPOT_BASE_URL = "https://api.mexc.com"
 MEXC_CONTRACT_BASE_URL = "https://contract.mexc.com"
 
 # Liquidity floor for Point-in-Time universe filtering (24h quote volume in USDT)
-DEFAULT_MIN_24H_TURNOVER_USDT = 50_000.0  # $50,000 floor for low/mid caps
+# Raised to $150,000 to eliminate adverse stop-loss slippage on illiquid micro-caps
+DEFAULT_MIN_24H_TURNOVER_USDT = 150_000.0
 
 # Pre-filter thresholds to control compute costs
 PREFILTER_MIN_RVOL_20 = 2.0         # 2.0x 20-bar average volume
@@ -63,6 +64,17 @@ MAX_TRADES_PER_15MIN = 2           # Cluster protection limit
 MAX_RVOL_CEILING = 8.0             # Exclude parabolic climax exhaustion spikes (>8.0x)
 MAX_RSI_CEILING = 68.0             # Exclude overbought pullback zones (>68.0)
 MIN_RVOL_FLOOR = 1.5               # Minimum relative volume for valid entry
-MIN_ALERT_SCORE = 85.0             # High-probability signal score threshold
+MIN_ALERT_SCORE = 80.0             # High-probability signal score threshold
 DEFAULT_MARGIN_USDT = 1.0          # $1.00 margin @ 10x leverage = $10.00 notional USD
 
+# OPTObot-v4 1.5R Fixed Target Profile (Sweet Spot identified from 57 live trades)
+TARGET_STOP_LOSS_PCT = 0.035       # -3.5% (1.0R Stop Loss)
+TARGET_TAKE_PROFIT_PCT = 0.0525    # +5.25% (1.5R Single Fixed Native Target)
+TARGET_RISK_REWARD_RATIO = 1.5     # 1 : 1.50
+
+# Market Regime Gate Configuration (Dynamic Tier Protection)
+ENABLE_MARKET_REGIME_GATE = os.getenv("ENABLE_REGIME_GATE", "true").lower() == "true"
+BTC_DUMP_1H_THRESHOLD_PCT = float(os.getenv("BTC_DUMP_1H_PCT", "-0.8"))     # Hard pause if BTC drops > 0.8% in 1h
+BTC_DUMP_15M_THRESHOLD_PCT = float(os.getenv("BTC_DUMP_15M_PCT", "-0.5"))   # Hard pause if BTC drops > 0.5% in 15m
+BTC_CAUTION_SCORE_PENALTY = float(os.getenv("BTC_CAUTION_SCORE_PENALTY", "10.0"))  # Elevate min-score from 80 -> 90 during pullback
+BTC_RSI_FLOOR_PANIC = float(os.getenv("BTC_RSI_FLOOR_PANIC", "38.0"))       # Severe oversold breakdown

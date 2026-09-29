@@ -18,11 +18,15 @@ from config import (
     MAX_TRADES_PER_15MIN,
     MAX_RVOL_CEILING,
     MAX_RSI_CEILING,
+    TARGET_STOP_LOSS_PCT,
+    TARGET_TAKE_PROFIT_PCT,
+    TARGET_RISK_REWARD_RATIO,
 )
 from src.data_ingestion.mexc_client import MexcClient
 from src.features.feature_pipeline import extract_features_point_in_time
 from src.live.alerting import AlertDispatcher
 from src.live.paper_trader import PaperTrader
+from src.live.market_regime import MarketRegimeGate, MarketRegimeResult
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,7 @@ class LiveMomentumScanner:
         min_24h_turnover: float = DEFAULT_MIN_24H_TURNOVER_USDT,
         min_score: float = 80.0,
         alpha_only: bool = True,
+        regime_gate: Optional[MarketRegimeGate] = None,
     ):
         self.client = client or MexcClient()
         self.dispatcher = dispatcher or AlertDispatcher()
@@ -51,6 +56,8 @@ class LiveMomentumScanner:
         self.min_24h_turnover = min_24h_turnover
         self.min_score = min_score
         self.alpha_only = alpha_only
+        self.regime_gate = regime_gate or MarketRegimeGate()
+        self.current_regime: Optional[MarketRegimeResult] = None
         self.seen_alerts: Dict[str, int] = {}  # 2-hour cooldown tracker (ms)
         self.trade_history_timestamps: List[int] = []  # 15-minute cluster rate limiter
 
@@ -60,11 +67,39 @@ class LiveMomentumScanner:
         dt_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         logger.info("Executing live scan cycle at %s", dt_str)
 
-        # 1. Fetch benchmark bars for relative strength
+        # 1. Fetch benchmark bars for relative strength and market regime
         btc_bars = self.client.get_klines("BTCUSDT", interval=self.interval, limit=80)
         eth_bars = self.client.get_klines("ETHUSDT", interval=self.interval, limit=80)
         btc_df = self._bars_to_df(btc_bars)
         eth_df = self._bars_to_df(eth_bars)
+
+        # Market Regime Gate Evaluation (Dynamic Tier Filtering)
+        regime = self.regime_gate.evaluate(btc_df, base_min_score=self.min_score)
+        self.current_regime = regime
+        effective_min_score = regime.effective_min_score
+
+        # Hard Circuit Breaker: If BTC is flushing, pause new entries and monitor active positions only
+        if not regime.allowed:
+            logger.warning("[REGIME GATE: CIRCUIT BREAKER TRIGGERED] ⛔ %s. Pausing all new entries.", regime.reason)
+            open_symbols = set()
+            if self.paper_trader and hasattr(self.paper_trader, "open_positions"):
+                open_symbols.update(self.paper_trader.open_positions.keys())
+            if self.executor and hasattr(self.executor, "live_positions"):
+                open_symbols.update(self.executor.live_positions.keys())
+            for sym in open_symbols:
+                try:
+                    bars = self.client.get_klines(sym, interval=self.interval, limit=5)
+                    if bars:
+                        curr_p = float(bars[-1][4])
+                        self.paper_trader.update_price(sym, curr_p, now_ms)
+                        if self.executor:
+                            self.executor.update_price(sym, curr_p, now_ms)
+                except Exception:
+                    pass
+            return []
+
+        if regime.regime == "CAUTION_PULLBACK":
+            logger.info("[REGIME GATE: CAUTION ACTIVE] ⚠️ %s", regime.reason)
 
         # 2. Get active tradeable altcoins clearing liquidity floor
         tickers = self.client.get_ticker_24hr()
@@ -144,10 +179,12 @@ class LiveMomentumScanner:
                     eth_klines_df=eth_df,
                 )
 
-                # Validate setup against Phase 1 empirical findings
-                is_valid, setup_name, setup_tier, score, reasons, levels = self._evaluate_setup_quality(feats, curr_price)
+                if is_valid:
+                    if score < effective_min_score:
+                        if regime.regime == "CAUTION_PULLBACK":
+                            logger.info("[FILTERED - REGIME CAUTION] %s score %.1f passed base (%.1f) but held by elevated regime threshold (%.1f)", sym, score, self.min_score, effective_min_score)
+                        continue
 
-                if is_valid and score >= self.min_score:
                     # Risk Collar 1: Maximum Concurrent Open Positions
                     # In live mode, strictly count actual live positions entered on WEEX
                     if self.executor and getattr(self.executor, "live_enabled", False):
@@ -310,19 +347,19 @@ class LiveMomentumScanner:
             score += 5.0
             reasons.append(f"Alpha vs BTC (+{rs_btc_1h*100:.1f}%)")
 
-        # Empirically Calibrated Targets for Alpha Setup (+4.0% TP1, +8.0% TP2, -3.5% SL)
-        # Fixed targets eliminate 5m ATR micro-scalping fee drag and capture the primary breakout impulse
-        stop_loss = curr_price * (1.0 - 0.035)  # -3.5% Base Invalidation Stop Loss
-        tp1 = curr_price * (1.0 + 0.040)        # +4.0% Primary Alpha Target (+40% on 10x Margin)
-        tp2 = curr_price * (1.0 + 0.080)        # +8.0% Runner Target (+80% on 10x Margin)
-        tp3 = curr_price * (1.0 + 0.120)        # +12.0% Moonbag Target
+        # Empirically Calibrated Targets for OPTObot-v4 (+5.25% TP, -3.5% SL = 1:1.50 R:R)
+        # Single fixed exchange-level target: eliminates dynamic trailing vulnerability while maximizing net PnL
+        stop_loss = round(curr_price * (1.0 - TARGET_STOP_LOSS_PCT), 6)   # -3.5% (1.0R Stop Loss)
+        take_profit = round(curr_price * (1.0 + TARGET_TAKE_PROFIT_PCT), 6) # +5.25% (1.5R Native Target)
 
         levels = {
             "entry_price": curr_price,
             "stop_loss": stop_loss,
-            "take_profit_1": tp1,
-            "take_profit_2": tp2,
-            "take_profit_3": tp3,
+            "take_profit": take_profit,
+            "take_profit_1": take_profit,
+            "take_profit_2": round(curr_price * 1.080, 6),
+            "take_profit_3": round(curr_price * 1.120, 6),
+            "risk_reward": TARGET_RISK_REWARD_RATIO,
         }
 
         is_valid = score >= self.min_score

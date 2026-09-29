@@ -100,8 +100,8 @@ def test_alert_dispatcher_alpha_only_filter(tmp_path, monkeypatch):
         trade_levels=levels,
     )
     assert len(sent_messages) == 1
-    assert "PRE-BREAKOUT ALPHA ALERT" in sent_messages[0]["text"]
-    assert "65.2% Win Rate | 2.36 Profit Factor" in sent_messages[0]["text"]
+    assert "OPTObot-v4 ALERT" in sent_messages[0]["text"]
+    assert "58.0% Win Rate | 2.01 Profit Factor" in sent_messages[0]["text"]
     assert log_file.exists()
 
     # 3. Test pause functionality

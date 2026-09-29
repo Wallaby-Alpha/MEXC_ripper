@@ -92,6 +92,12 @@ class WeexExecutor(BaseExecutor):
             setup_tier=setup_tier,
         )
 
+        if not self.live_enabled:
+            return {
+                **paper_res,
+                "weex_live": False,
+            }
+
         # Resolve MEXC symbol to canonical WEEX contract symbol (e.g. SUIUSDT)
         weex_symbol = self.resolver.resolve(symbol)
         if not weex_symbol:
