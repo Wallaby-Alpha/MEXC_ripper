@@ -179,6 +179,9 @@ class LiveMomentumScanner:
                     eth_klines_df=eth_df,
                 )
 
+                # Validate setup against empirical alpha criteria
+                is_valid, setup_name, setup_tier, score, reasons, levels = self._evaluate_setup_quality(feats, curr_price)
+
                 if is_valid:
                     if score < effective_min_score:
                         if regime.regime == "CAUTION_PULLBACK":
