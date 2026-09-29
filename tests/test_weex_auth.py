@@ -52,10 +52,12 @@ def test_weex_executor_safety_gate():
     assert res["status"] == "FILLED_SIMULATED"
     assert "ENAUSDT" in executor.get_open_positions()
 
-    # Test price update and stop loss / breakeven
+    # Test price update and fixed take profit closure (+5.25%)
     executor.update_price("ENAUSDT", 0.174, 1789695700000)
-    pos = executor.get_open_positions()["ENAUSDT"]
-    assert pos.tp1_hit is True  # Reached TP1 (+9%), stop loss trailed to breakeven
+    assert "ENAUSDT" not in executor.get_open_positions()
+    closed = executor.paper.trader.closed_positions
+    assert len(closed) == 1
+    assert "CLOSED_TP" in closed[0].status
 
 
 def test_paper_executor():

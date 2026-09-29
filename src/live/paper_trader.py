@@ -60,6 +60,7 @@ class PaperTrader:
         if symbol in self.open_positions:
             return
 
+        tp_target = trade_levels.get("take_profit", trade_levels.get("take_profit_1", entry_price * 1.0525))
         pos = PaperPosition(
             symbol=symbol,
             entry_time_ms=timestamp_ms,
@@ -67,24 +68,23 @@ class PaperTrader:
             setup_name=setup_name,
             setup_tier=setup_tier,
             stop_loss=trade_levels.get("stop_loss", entry_price * 0.965),
-            take_profit_1=trade_levels.get("take_profit_1", entry_price * 1.040),
-            take_profit_2=trade_levels.get("take_profit_2", entry_price * 1.080),
-            take_profit_3=trade_levels.get("take_profit_3", entry_price * 1.120),
+            take_profit_1=tp_target,
+            take_profit_2=tp_target,
+            take_profit_3=tp_target,
             size_usdt=self.default_size_usdt,
         )
         self.open_positions[symbol] = pos
         logger.info(
-            "[PAPER POSITION OPENED] %s @ $%.6f | SL: $%.6f | TP1: $%.6f (+4.0%%) | TP2: $%.6f ($%.0f USDT virtual)",
+            "[PAPER POSITION OPENED] %s @ $%.6f | SL: $%.6f (-3.5%%) | TP (1.5R): $%.6f (+5.25%%) ($%.0f USDT virtual)",
             symbol,
             entry_price,
             pos.stop_loss,
             pos.take_profit_1,
-            pos.take_profit_2,
             self.default_size_usdt,
         )
 
     def update_price(self, symbol: str, current_price: float, timestamp_ms: int):
-        """Updates open position, checks stops, trailing breakeven, targets, and 6h time stop."""
+        """Updates open position, checks stops, targets, and 6h time stop."""
         if symbol not in self.open_positions:
             return
 
@@ -98,21 +98,14 @@ class PaperTrader:
             self._close_position(pos, current_price, timestamp_ms, "CLOSED_TIMEOUT (6H TIME STOP)")
             return
 
-        # 2. If TP1 hit (+4.0%), trail stop loss to Breakeven (+0.2% fee coverage)
-        if not pos.tp1_hit and current_price >= pos.take_profit_1:
-            pos.tp1_hit = True
-            pos.stop_loss = pos.entry_price * 1.002  # Cover fee / breakeven
-            logger.info("[PAPER TRADE TP1 REACHED] %s @ $%.6f (+4.0%%) | Stop trailed to Breakeven", symbol, current_price)
-
-        # 3. Check TP2 (+8.0% runner target)
-        if current_price >= pos.take_profit_2:
-            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP2 (+8.0% TARGET)")
+        # 2. Check Single Fixed Take Profit (+5.25% / 1.5R Native Target)
+        if current_price >= pos.take_profit_1:
+            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP (+5.25% 1.5R TARGET)")
             return
 
-        # 4. Check Stop Loss (or Breakeven stop)
+        # 3. Check Stop Loss (-3.5% / 1.0R Base Invalidation)
         if current_price <= pos.stop_loss:
-            reason = "CLOSED_BE" if pos.tp1_hit else "CLOSED_SL"
-            self._close_position(pos, current_price, timestamp_ms, reason)
+            self._close_position(pos, current_price, timestamp_ms, "CLOSED_SL (-3.5% STOP LOSS)")
             return
 
     def _close_position(self, pos: PaperPosition, exit_price: float, timestamp_ms: int, status: str):

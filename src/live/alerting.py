@@ -81,11 +81,11 @@ class AlertDispatcher:
         table.add_column("Trade Execution Levels (Optimized)", style="bold yellow")
 
         table.add_row("Setup Archetype", f"[{tier_color}]{setup_name}[/{tier_color}]", f"Entry Price: [bold green]${price:.6f}[/bold green]")
-        table.add_row("Setup Score", f"[bold cyan]{score:.1f} / 100[/bold cyan]", f"Stop Loss: [bold red]${stop_loss:.6f}[/bold red] (-{risk_pct:.1f}%)")
-        table.add_row("RVOL (20-bar)", f"{rvol:.2f}x baseline", f"TP 1 (50% + BE): [green]${tp1:.6f}[/green] (+{((tp1-price)/price)*100:.1f}%)")
-        table.add_row("Order Flow CVD", f"{cvd:+,.0f} delta", f"TP 2 (Final 50%): [bold green]${tp2:.6f}[/bold green] (+{reward_pct:.1f}%)")
-        table.add_row("Max Hold Time", "[bold yellow]6 Hours Time Stop[/bold yellow]", f"TP 3 (Runner): [bold green]${tp3:.6f}[/bold green] (+{((tp3-price)/price)*100:.1f}%)")
-        table.add_row("Risk / Reward", f"[bold green]1 : {rr_ratio:.1f}[/bold green]", f"MEXC URL: https://www.mexc.com/exchange/{sym}")
+        table.add_row("Setup Score", f"[bold cyan]{score:.1f} / 100[/bold cyan]", f"Stop Loss (1R): [bold red]${stop_loss:.6f}[/bold red] (-{risk_pct:.1f}%)")
+        table.add_row("RVOL (20-bar)", f"{rvol:.2f}x baseline", f"Take Profit (1.5R): [bold green]${tp1:.6f}[/bold green] (+5.25% Native Target)")
+        table.add_row("Order Flow CVD", f"{cvd:+,.0f} delta", "Exit Strategy: 100% Native Limit Fill")
+        table.add_row("Max Hold Time", "[bold yellow]6 Hours Time Stop[/bold yellow]", f"Risk / Reward: [bold green]1 : 1.50[/bold green]")
+        table.add_row("MEXC URL", f"https://www.mexc.com/exchange/{sym}", "OPTObot-v4 Calibrated Target")
 
         console.print(Panel(table, title=alert_title, border_style="green", expand=False))
         console.print(f"[bold yellow]Preconditions Met:[/bold yellow] {' | '.join(reasons)}\n")
@@ -245,8 +245,8 @@ class AlertDispatcher:
                 f"• *Symbol*: `{symbol}`\n"
                 f"• *Simulated Margin*: `${margin:.2f} USDT` @ `{leverage}x Isolated` (`${notional:.2f}` Notional)\n"
                 f"• *Entry*: `${entry_price:.6f}`\n"
-                f"• *Stop Loss*: `${sl:.6f}` (-3.5%)\n"
-                f"• *Target 1*: `${tp1:.6f}` (+3.5%)\n\n"
+                f"• *Stop Loss (1R)*: `${sl:.6f}` (-3.5%)\n"
+                f"• *Take Profit (1.5R)*: `${tp1:.6f}` (+5.25% | Single Target)\n\n"
                 f"ℹ️ *Paper trading mode active (Zero real capital risk).*"
             )
 

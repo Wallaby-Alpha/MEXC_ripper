@@ -224,9 +224,8 @@ class InteractiveTelegramBot:
                     f"  • Entry: `${pos.entry_price:.6f}`\n"
                     f"  • Current: `${pos.current_price:.6f}` (*{ret:+.2f}%*)\n"
                     f"  • Peak Run: `+{peak:.2f}%`\n"
-                    f"  • Stop Loss: `${pos.stop_loss:.6f}` (-3.5%)\n"
-                    f"  • Target 1 (+3.5%): `${pos.take_profit_1:.6f}`\n"
-                    f"  • Target 2 (+7.5%): `${pos.take_profit_2:.6f}`\n"
+                    f"  • Stop Loss (1R): `${pos.stop_loss:.6f}` (-3.5%)\n"
+                    f"  • Take Profit (1.5R): `${pos.take_profit_1:.6f}` (+5.25% | Single Target)\n"
                 )
             self.send_message("\n".join(lines))
 
