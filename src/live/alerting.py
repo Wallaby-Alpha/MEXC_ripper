@@ -266,3 +266,26 @@ class AlertDispatcher:
                     logger.info("Telegram execution alert delivered successfully.")
             except Exception as exc:
                 logger.warning("Telegram execution alert exception: %s", exc)
+
+    def notify_time_stop(self, symbol: str, duration_hours: float, exit_price: float, pnl_pct: float, pnl_usdt: float):
+        """Broadcast 6-hour time stop closure to Telegram."""
+        if self.is_paused or not self.telegram_bot_token or not self.telegram_chat_id:
+            return
+
+        pnl_color = "🟢" if pnl_pct >= 0 else "🔴"
+        msg = (
+            f"⏱️ *TRADE CLOSED (6H TIME STOP)* ⏱️\n"
+            f"• *Symbol*: `{symbol}`\n"
+            f"• *Hold Duration*: `{duration_hours:.1f} hours`\n"
+            f"• *Exit Price*: `${exit_price:.6f}`\n"
+            f"• *PnL*: {pnl_color} `{pnl_pct*100:+.2f}%` (`{pnl_usdt:+.2f} USDT`)\n\n"
+            f"ℹ️ Position closed by 6-Hour Invalidation Time Stop to release margin."
+        )
+        try:
+            tg_url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
+            res = httpx.post(tg_url, json={"chat_id": self.telegram_chat_id, "text": msg, "parse_mode": "Markdown"}, timeout=8.0)
+            if res.status_code != 200:
+                httpx.post(tg_url, json={"chat_id": self.telegram_chat_id, "text": msg}, timeout=8.0)
+        except Exception as exc:
+            logger.warning("Telegram time stop alert exception: %s", exc)
+

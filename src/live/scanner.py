@@ -90,6 +90,9 @@ class LiveMomentumScanner:
 
         alerts_triggered: List[Dict[str, Any]] = []
 
+        # Active Lifecycle Guard: Enforce 6-Hour Time Stop across both paper and live positions
+        self._enforce_time_stops(now_ms)
+
         # 3. Evaluate each altcoin
         for sym in scan_symbols:
             try:
@@ -212,6 +215,45 @@ class LiveMomentumScanner:
 
         return alerts_triggered
 
+    def _enforce_time_stops(self, now_ms: int, max_age_ms: int = 6 * 3600 * 1000):
+        """Actively checks and closes all open positions (paper and live) older than 6 hours."""
+        # 1. Enforce on paper positions
+        if hasattr(self.paper_trader, "open_positions"):
+            for sym, pos in list(self.paper_trader.open_positions.items()):
+                entry_t = getattr(pos, "entry_time_ms", getattr(pos, "entry_time", now_ms))
+                age_ms = now_ms - entry_t
+                if age_ms >= max_age_ms:
+                    dur_hours = age_ms / (3600 * 1000)
+                    curr_p = getattr(pos, "current_price", pos.entry_price)
+                    logger.info("[6H TIME STOP TRIGGERED] Closing %s after %.1f hours", sym, dur_hours)
+                    self.paper_trader._close_position(pos, curr_p, now_ms, "CLOSED_TIMEOUT (6H TIME STOP)")
+                    if self.executor:
+                        self.executor.close_position(sym, reason="CLOSED_TIMEOUT (6H TIME STOP)")
+                    if hasattr(self.dispatcher, "notify_time_stop"):
+                        self.dispatcher.notify_time_stop(
+                            symbol=sym,
+                            duration_hours=dur_hours,
+                            exit_price=curr_p,
+                            pnl_pct=pos.pnl_pct,
+                            pnl_usdt=pos.pnl_usdt,
+                        )
+
+        # 2. Enforce on executor live positions (for orphaned or exchange-held trades)
+        if self.executor and hasattr(self.executor, "enforce_time_stops"):
+            try:
+                closed_live = self.executor.enforce_time_stops(max_age_ms=max_age_ms)
+                for cl_sym in closed_live:
+                    if hasattr(self.dispatcher, "notify_time_stop"):
+                        self.dispatcher.notify_time_stop(
+                            symbol=cl_sym,
+                            duration_hours=6.0,
+                            exit_price=0.0,
+                            pnl_pct=0.0,
+                            pnl_usdt=0.0,
+                        )
+            except Exception as ts_err:
+                logger.warning("Error enforcing executor time stops: %s", ts_err)
+
     def _evaluate_setup_quality(
         self, feats: Dict[str, Any], curr_price: float
     ) -> Tuple[bool, str, str, float, List[str], Dict[str, float]]:
@@ -310,11 +352,11 @@ class LiveMomentumScanner:
             score += 5.0
             reasons.append(f"Alpha vs BTC (+{rs_btc_1h*100:.1f}%)")
 
-        # Empirically Calibrated Targets for Alpha Setup (+4.0% TP1, +8.0% TP2, -3.5% SL)
+        # Empirically Calibrated Targets for Alpha Setup (+3.5% TP1, +7.5% TP2, -3.5% SL)
         # Fixed targets eliminate 5m ATR micro-scalping fee drag and capture the primary breakout impulse
         stop_loss = curr_price * (1.0 - 0.035)  # -3.5% Base Invalidation Stop Loss
-        tp1 = curr_price * (1.0 + 0.040)        # +4.0% Primary Alpha Target (+40% on 10x Margin)
-        tp2 = curr_price * (1.0 + 0.080)        # +8.0% Runner Target (+80% on 10x Margin)
+        tp1 = curr_price * (1.0 + 0.035)        # +3.5% Primary Alpha Target (+35% on 10x Margin)
+        tp2 = curr_price * (1.0 + 0.075)        # +7.5% Runner Target (+75% on 10x Margin)
         tp3 = curr_price * (1.0 + 0.120)        # +12.0% Moonbag Target
 
         levels = {

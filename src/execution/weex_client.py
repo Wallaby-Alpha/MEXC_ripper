@@ -170,7 +170,14 @@ class WeexClient:
         WEEX V3 requires client order IDs to have the 'b-' prefix.
         """
         # Clean side and positionSide for WEEX V3 Contract API:
-        if "short" in str(side).lower() or "sell" in str(side).lower():
+        side_lower = str(side).lower()
+        if "close_long" in side_lower or "closelong" in side_lower:
+            order_side = "SELL"
+            pos_side = "LONG"
+        elif "close_short" in side_lower or "closeshort" in side_lower:
+            order_side = "BUY"
+            pos_side = "SHORT"
+        elif "short" in side_lower or "sell" in side_lower:
             order_side = "SELL"
             pos_side = "SHORT"
         else:

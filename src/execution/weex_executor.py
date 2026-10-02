@@ -1,7 +1,8 @@
 """WEEX execution bridge implementing BaseExecutor with strict live-trading safety gate."""
 import os
+import time
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from src.execution.base_executor import BaseExecutor
 from src.execution.weex_client import WeexClient
 from src.execution.paper_executor import PaperExecutor
@@ -285,6 +286,9 @@ class WeexExecutor(BaseExecutor):
                 "weex_live": True,
                 "size_usdt": actual_margin,
                 "notional_usdt": actual_notional,
+                "qty_str": qty_str,
+                "entry_price": entry_price,
+                "entry_time_ms": int(time.time() * 1000),
                 "leverage": self.leverage,
                 "response": order_res,
             }
@@ -306,32 +310,97 @@ class WeexExecutor(BaseExecutor):
         self.paper.update_price(symbol, current_price, timestamp_ms)
 
     def close_position(self, symbol: str, reason: str = "MANUAL_CLOSE") -> Optional[Dict[str, Any]]:
-        self.live_positions.pop(symbol, None)
+        pos_info = self.live_positions.pop(symbol, None)
         if not self.live_enabled:
             return self.paper.close_position(symbol, reason)
 
         # Close on WEEX & cancel lingering native TP/SL orders
         try:
-            weex_symbol = symbol if "_" in symbol else symbol.replace("USDT", "_USDT")
-            self.client.place_order(
-                symbol=weex_symbol,
-                side="close_long",
-                order_type="market",
-                is_contract=True,
-            )
-            # Cancel open conditional orders for this symbol
+            weex_symbol = self.resolver.resolve(symbol) or (symbol if "_" in symbol else symbol.replace("USDT", "_USDT"))
+
+            # Determine size to close
+            qty_str = None
+            if pos_info and "qty_str" in pos_info:
+                qty_str = str(pos_info["qty_str"])
+            else:
+                try:
+                    open_pos = self.client.get_open_positions()
+                    for p in open_pos:
+                        raw_s = str(p.get("symbol", "")).upper().replace("CMT_", "").replace("_USDT", "USDT")
+                        canon = self.resolver.resolve(symbol) or symbol
+                        if raw_s in (symbol.upper(), canon.upper()):
+                            sz = float(p.get("total") or p.get("size") or p.get("positionAmt") or p.get("holdAmount") or 0.0)
+                            if sz > 0:
+                                qty_str = self.resolver.format_size(weex_symbol, sz)
+                                break
+                except Exception as sz_err:
+                    logger.warning("Could not query live size for %s: %s", symbol, sz_err)
+
+            # Cancel open conditional / trigger / plan orders for this symbol first
             tpsl_info = self.active_tpsl_orders.pop(symbol, {})
             for order_key in ("tp_order_id", "sl_order_id"):
                 oid = tpsl_info.get(order_key)
-                if oid:
+                if oid and oid != "ATTACHED_ON_ENTRY":
                     try:
                         self.client.cancel_tpsl_order(weex_symbol, oid)
+                        logger.info("[WEEX TRIGGER ORDER CANCELED] %s trigger order %s canceled", weex_symbol, oid)
                     except Exception:
                         pass
+
+            # Market close the position on WEEX
+            close_size = qty_str if qty_str else "1.0"
+            res = self.client.place_order(
+                symbol=weex_symbol,
+                side="close_long",
+                order_type="market",
+                size=close_size,
+                is_contract=True,
+            )
+            logger.info("[WEEX LIVE POSITION CLOSED] %s (%s) closed (Reason: %s, Qty: %s, Res: %s)", symbol, weex_symbol, reason, close_size, res)
         except Exception as exc:
             logger.error("Failed closing WEEX live position for %s: %s", symbol, exc)
 
         return self.paper.close_position(symbol, reason)
+
+    def enforce_time_stops(self, max_age_ms: int = 6 * 3600 * 1000) -> List[str]:
+        """Scans tracked live positions and actively closes any open >= 6 hours."""
+        if not self.live_enabled:
+            return []
+
+        now_ms = int(time.time() * 1000)
+        closed_symbols = []
+
+        # 1. Check internally tracked live positions
+        for sym, info in list(self.live_positions.items()):
+            entry_t = info.get("entry_time_ms")
+            if entry_t and (now_ms - entry_t) >= max_age_ms:
+                dur_hours = (now_ms - entry_t) / (3600 * 1000)
+                logger.info("[WEEX 6H TIME STOP TRIGGERED] Closing %s (held %.1f hours)", sym, dur_hours)
+                self.close_position(sym, reason="CLOSED_TIMEOUT (6H TIME STOP)")
+                closed_symbols.append(sym)
+
+        # 2. Check exchange live positions for any untracked or stale positions >= 6h
+        try:
+            exchange_positions = self.client.get_open_positions()
+            for p in exchange_positions:
+                raw_sym = str(p.get("symbol", "")).upper().replace("CMT_", "").replace("_USDT", "USDT")
+                # Look for open time in exchange payload (ctime / openTime / uTime)
+                ctime_raw = p.get("cTime") or p.get("openTime") or p.get("ctime") or p.get("uTime")
+                if ctime_raw:
+                    try:
+                        ctime_ms = int(ctime_raw)
+                        if (now_ms - ctime_ms) >= max_age_ms:
+                            dur_hours = (now_ms - ctime_ms) / (3600 * 1000)
+                            logger.info("[WEEX EXCHANGE 6H TIME STOP] Closing stale %s (held %.1f hours on exchange)", raw_sym, dur_hours)
+                            self.close_position(raw_sym, reason="CLOSED_TIMEOUT (6H TIME STOP)")
+                            if raw_sym not in closed_symbols:
+                                closed_symbols.append(raw_sym)
+                    except (ValueError, TypeError):
+                        pass
+        except Exception as exc:
+            logger.warning("Error checking exchange positions for time stops: %s", exc)
+
+        return closed_symbols
 
     def get_open_positions(self) -> Dict[str, Any]:
         """Returns currently active live positions on WEEX when in live mode."""
