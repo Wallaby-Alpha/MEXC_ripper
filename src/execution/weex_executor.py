@@ -11,6 +11,28 @@ from src.execution.weex_symbol_mapper import WeexSymbolResolver
 logger = logging.getLogger(__name__)
 
 
+def _safe_float_env(key: str, default: float) -> float:
+    raw = os.getenv(key)
+    if not raw:
+        return default
+    clean = str(raw).split("#")[0].strip().strip('"').strip("'")
+    try:
+        return float(clean)
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_int_env(key: str, default: int) -> int:
+    raw = os.getenv(key)
+    if not raw:
+        return default
+    clean = str(raw).split("#")[0].strip().strip('"').strip("'")
+    try:
+        return int(clean)
+    except (ValueError, TypeError):
+        return default
+
+
 class WeexExecutor(BaseExecutor):
     """Bridge for executing trades on WEEX exchange with safe dry-run fallback."""
 
@@ -22,21 +44,22 @@ class WeexExecutor(BaseExecutor):
         live_enabled: Optional[bool] = None,
     ):
         self.client = weex_client or WeexClient(
-            api_key=os.getenv("WEEX_API_KEY", ""),
-            api_secret=os.getenv("WEEX_API_SECRET", ""),
-            passphrase=os.getenv("WEEX_PASSPHRASE", ""),
+            api_key=str(os.getenv("WEEX_API_KEY", "")).split("#")[0].strip().strip('"').strip("'"),
+            api_secret=str(os.getenv("WEEX_API_SECRET", "")).split("#")[0].strip().strip('"').strip("'"),
+            passphrase=str(os.getenv("WEEX_PASSPHRASE", "")).split("#")[0].strip().strip('"').strip("'"),
         )
         self.paper = paper_fallback or PaperExecutor()
         self.resolver = symbol_resolver or WeexSymbolResolver()
         self.active_tpsl_orders: Dict[str, Dict[str, Any]] = {}
         self.live_positions: Dict[str, Dict[str, Any]] = {}
-        self.leverage = int(os.getenv("WEEX_LEVERAGE", "10"))
+        self.leverage = _safe_int_env("WEEX_LEVERAGE", 10)
 
         # Strict safety gate: defaults to False unless explicitly set to 'true' in env
         if live_enabled is not None:
             self.live_enabled = live_enabled
         else:
-            self.live_enabled = os.getenv("WEEX_LIVE_TRADING_ENABLED", "false").strip().lower() == "true"
+            raw_enabled = str(os.getenv("WEEX_LIVE_TRADING_ENABLED", "false")).split("#")[0].strip().strip('"').strip("'").lower()
+            self.live_enabled = raw_enabled == "true"
 
         if not self.live_enabled:
             logger.info("WEEX Executor initialized in DRY-RUN / PAPER MODE (Zero live capital risk).")
@@ -127,7 +150,8 @@ class WeexExecutor(BaseExecutor):
         # If exchange minOrderSize forces an order that exceeds margin budget by >30% (max $1.30 margin), ABORT!
         actual_notional = qty * entry_price
         actual_margin = actual_notional / self.leverage if self.leverage > 0 else actual_notional
-        max_allowed_margin = target_margin * float(os.getenv("WEEX_MAX_MARGIN_MULTIPLIER", "1.30"))
+        max_multiplier = _safe_float_env("WEEX_MAX_MARGIN_MULTIPLIER", 1.30)
+        max_allowed_margin = target_margin * max_multiplier
 
         if actual_margin > max_allowed_margin or actual_margin > 1.50:
             logger.warning(

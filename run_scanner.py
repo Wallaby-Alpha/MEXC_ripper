@@ -83,10 +83,16 @@ def display_open_positions_table(paper_trader: PaperTrader):
 
 def main():
     args = parse_args()
-    tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    tg_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-    weex_live = args.weex_live or (os.getenv("WEEX_LIVE_TRADING_ENABLED", "false").lower() == "true")
-    trade_size = args.trade_size or float(os.getenv("WEEX_TRADE_SIZE_USDT", "1.0"))
+    tg_token = str(os.getenv("TELEGRAM_BOT_TOKEN", "")).split("#")[0].strip().strip('"').strip("'")
+    tg_chat_id = str(os.getenv("TELEGRAM_CHAT_ID", "")).split("#")[0].strip().strip('"').strip("'")
+    raw_live = str(os.getenv("WEEX_LIVE_TRADING_ENABLED", "false")).split("#")[0].strip().strip('"').strip("'").lower()
+    weex_live = args.weex_live or (raw_live == "true")
+    raw_size = str(os.getenv("WEEX_TRADE_SIZE_USDT", "1.0")).split("#")[0].strip().strip('"').strip("'")
+    try:
+        trade_size_val = float(raw_size)
+    except (ValueError, TypeError):
+        trade_size_val = 1.0
+    trade_size = args.trade_size or trade_size_val
 
     exec_mode = "WEEX LIVE CAPITAL (Native TP/SL Enforced)" if weex_live else "PAPER TRADING (Zero Live Capital Risk)"
     strategy_mode = "TIER 1 ALPHA ONLY (PRE_BREAKOUT_ACCUMULATION | PF 2.36, 65.2% Win Rate)" if args.alpha_only else "ALL SETUPS"
