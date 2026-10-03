@@ -217,7 +217,7 @@ class AlertDispatcher:
                 f"🔒 *Exchange Protection*: `Native TP/SL Attached`"
             )
         # 2. Exchange Minimum Lot Size Exceeds Budget (Collar Protection)
-        elif status == "SKIPPED_MIN_ORDER_EXCEEDS_BUDGET":
+        elif status in ("SKIPPED_MARGIN_CAP_EXCEEDED", "SKIPPED_MIN_ORDER_EXCEEDS_BUDGET"):
             req_margin = exec_res.get("required_margin", margin)
             target_m = exec_res.get("target_margin", 1.0)
             msg = (
