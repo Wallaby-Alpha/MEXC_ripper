@@ -18,6 +18,7 @@ from config import (
     MAX_TRADES_PER_15MIN,
     MAX_RVOL_CEILING,
     MAX_RSI_CEILING,
+    LOSS_COOLDOWN_HOURS,
 )
 from src.data_ingestion.mexc_client import MexcClient
 from src.features.feature_pipeline import extract_features_point_in_time
@@ -52,6 +53,7 @@ class LiveMomentumScanner:
         self.min_score = min_score
         self.alpha_only = alpha_only
         self.seen_alerts: Dict[str, int] = {}  # 2-hour cooldown tracker (ms)
+        self.symbol_loss_cooldown: Dict[str, int] = {}  # 12-hour symbol cooldown after any loss (ms)
         self.trade_history_timestamps: List[int] = []  # 15-minute cluster rate limiter
 
     def poll_cycle(self, max_symbols: int = 50) -> List[Dict[str, Any]]:
@@ -170,6 +172,13 @@ class LiveMomentumScanner:
                         logger.info("[SKIPPED - CLUSTER RATE LIMIT REACHED] %s skipped (%d trades in last 15m)", sym, len(self.trade_history_timestamps))
                         continue
 
+                    # Risk Collar 3: Symbol Loss Cooldown (12 hours) to avoid buying falling knives
+                    loss_until = self.symbol_loss_cooldown.get(sym, 0)
+                    if now_ms < loss_until:
+                        rem_hours = (loss_until - now_ms) / (3600 * 1000)
+                        logger.info("[SKIPPED - LOSS COOLDOWN] %s skipped (cooling down for %.1fh after prior loss)", sym, rem_hours)
+                        continue
+
                     # 2-hour symbol cooldown (prevent churning the same coin repeatedly)
                     last_alert_time = self.seen_alerts.get(sym, 0)
                     if now_ms - last_alert_time > 2 * 60 * 60 * 1000:
@@ -189,7 +198,7 @@ class LiveMomentumScanner:
                                     take_profit=levels["take_profit_1"],
                                     setup_name=setup_name,
                                     setup_tier=setup_tier,
-                                )
+                                    )
                                 # In live WEEX mode, if order was NOT filled on WEEX, do NOT count it as an active open position!
                                 if getattr(self.executor, "live_enabled", False):
                                     if not exec_res or exec_res.get("status") != "FILLED_WEEX_LIVE":
@@ -215,20 +224,45 @@ class LiveMomentumScanner:
 
         return alerts_triggered
 
-    def _enforce_time_stops(self, now_ms: int, max_age_ms: int = 6 * 3600 * 1000):
-        """Actively checks and closes all open positions (paper and live) older than 6 hours."""
+    def record_symbol_loss(self, symbol: str, now_ms: int, cooldown_hours: int = LOSS_COOLDOWN_HOURS):
+        """Places a symbol into extended cooldown after a losing trade or timeout."""
+        expiry = now_ms + (cooldown_hours * 3600 * 1000)
+        self.symbol_loss_cooldown[symbol] = expiry
+        logger.info(
+            "[SYMBOL LOSS COOLDOWN ACTIVE] %s locked out for %dh until %s",
+            symbol,
+            cooldown_hours,
+            datetime.fromtimestamp(expiry / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        )
+
+    def _enforce_time_stops(self, now_ms: int, max_age_ms: int = 24 * 3600 * 1000):
+        """Actively checks and closes stagnant underwater positions older than 24 hours.
+        CRITICAL: Never closes a position that is in profit or developing normally!
+        """
+        # Register loss cooldown for any closed paper position that lost money
+        if hasattr(self.paper_trader, "closed_positions"):
+            for pos in self.paper_trader.closed_positions[-20:]:
+                if pos.pnl_usdt < 0 and pos.symbol not in self.symbol_loss_cooldown:
+                    self.record_symbol_loss(pos.symbol, now_ms)
+
         # 1. Enforce on paper positions
         if hasattr(self.paper_trader, "open_positions"):
             for sym, pos in list(self.paper_trader.open_positions.items()):
                 entry_t = getattr(pos, "entry_time_ms", getattr(pos, "entry_time", now_ms))
                 age_ms = now_ms - entry_t
+                curr_p = getattr(pos, "current_price", pos.entry_price)
+
+                # Never close a trade in profit on time stop!
+                if curr_p >= pos.entry_price * 1.002:
+                    continue
+
                 if age_ms >= max_age_ms:
                     dur_hours = age_ms / (3600 * 1000)
-                    curr_p = getattr(pos, "current_price", pos.entry_price)
-                    logger.info("[6H TIME STOP TRIGGERED] Closing %s after %.1f hours", sym, dur_hours)
-                    self.paper_trader._close_position(pos, curr_p, now_ms, "CLOSED_TIMEOUT (6H TIME STOP)")
+                    logger.info("[24H TIME STOP TRIGGERED] Closing stagnant underwater %s after %.1f hours", sym, dur_hours)
+                    self.paper_trader._close_position(pos, curr_p, now_ms, "CLOSED_TIMEOUT (24H TIME STOP)")
                     if self.executor:
-                        self.executor.close_position(sym, reason="CLOSED_TIMEOUT (6H TIME STOP)")
+                        self.executor.close_position(sym, reason="CLOSED_TIMEOUT (24H TIME STOP)")
+                    self.record_symbol_loss(sym, now_ms)
                     if hasattr(self.dispatcher, "notify_time_stop"):
                         self.dispatcher.notify_time_stop(
                             symbol=sym,
@@ -243,10 +277,11 @@ class LiveMomentumScanner:
             try:
                 closed_live = self.executor.enforce_time_stops(max_age_ms=max_age_ms)
                 for cl_sym in closed_live:
+                    self.record_symbol_loss(cl_sym, now_ms)
                     if hasattr(self.dispatcher, "notify_time_stop"):
                         self.dispatcher.notify_time_stop(
                             symbol=cl_sym,
-                            duration_hours=6.0,
+                            duration_hours=24.0,
                             exit_price=0.0,
                             pnl_pct=0.0,
                             pnl_usdt=0.0,

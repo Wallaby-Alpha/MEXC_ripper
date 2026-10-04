@@ -54,10 +54,7 @@ BACKOFF_FACTOR = 1.5
 SQLITE_DB_PATH = RAW_DATA_DIR / "mexc_market_data.sqlite"
 
 # Quantitative Optimizations (Empirically Calibrated)
-TOXIC_COIN_BLACKLIST = {
-    "ZECUSDT", "ENAUSDT", "ETHFIUSDT", "AEROUSDT", "LTCUSDT", "ASTERUSDT", "ARBUSDT",
-    "ZEC", "ENA", "ETHFI", "AERO", "LTC", "ASTER", "ARB"
-}
+TOXIC_COIN_BLACKLIST = set()  # No pairs blacklisted per user preference
 MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "4"))       # Cap at 4 positions to prevent correlation dump cascades
 MAX_TRADES_PER_15MIN = 2           # Cluster protection limit
 MAX_RVOL_CEILING = 8.0             # Exclude parabolic climax exhaustion spikes (>8.0x)
@@ -65,4 +62,8 @@ MAX_RSI_CEILING = 68.0             # Exclude overbought pullback zones (>68.0)
 MIN_RVOL_FLOOR = 1.5               # Minimum relative volume for valid entry
 MIN_ALERT_SCORE = 85.0             # High-probability signal score threshold
 DEFAULT_MARGIN_USDT = 1.0          # $1.00 margin @ 10x leverage = $10.00 notional USD
+LOSS_COOLDOWN_HOURS = 12           # 12-hour symbol cooldown after any losing trade
+BREAKEVEN_TRIGGER_GAIN_PCT = 0.015 # +1.5% halfway to TP1 triggers stop move to breakeven
+BREAKEVEN_SL_OFFSET_PCT = 0.002    # +0.2% fee coverage for breakeven stops
+TIME_STOP_MAX_AGE_HOURS = 24       # 24h stagnation timeout (never closes profitable trades)
 

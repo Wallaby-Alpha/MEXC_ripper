@@ -93,25 +93,51 @@ class PaperTrader:
         pos.highest_price = max(pos.highest_price, current_price)
         pos.lowest_price = min(pos.lowest_price, current_price)
 
-        # 1. 6-Hour Time Stop Invalidation (Kills stagnant post-pump trades)
-        if (timestamp_ms - pos.entry_time_ms) >= 6 * 3600 * 1000:
-            self._close_position(pos, current_price, timestamp_ms, "CLOSED_TIMEOUT (6H TIME STOP)")
-            return
+        # 1. Early Dynamic Breakeven Ratchet (+1.5% Halfway Milestone):
+        # When price reaches +1.5%, trail stop to Breakeven (+0.2% fee cushion) to eliminate downside risk
+        if not pos.tp1_hit and current_price >= pos.entry_price * 1.015:
+            be_price = pos.entry_price * 1.002
+            if pos.stop_loss < be_price:
+                pos.stop_loss = be_price
+                logger.info(
+                    "[PAPER TRADE BREAKEVEN RATCHET] %s reached +1.5%% gain @ $%.6f | Stop trailed to Breakeven $%.6f (+0.2%% fee cushion)",
+                    symbol,
+                    current_price,
+                    be_price,
+                )
 
-        # 2. If TP1 hit (+3.5%), trail stop loss to Breakeven (+0.2% fee coverage)
+        # 2. Relaxed Time Stop: NEVER close a profitable or developing trade on a time stop!
+        # If trade reaches 6 hours and is in profit, ensure stop is at least Breakeven and let it ride to target.
+        # Only stagnant, underwater trades are closed after 24 hours.
+        age_ms = timestamp_ms - pos.entry_time_ms
+        if age_ms >= 6 * 3600 * 1000 and current_price >= pos.entry_price * 1.002:
+            if pos.stop_loss < pos.entry_price * 1.002:
+                pos.stop_loss = pos.entry_price * 1.002
+                logger.info(
+                    "[6H PROFIT PROTECT] %s in profit after 6h | Stop secured at Breakeven $%.6f, letting trade run to target",
+                    symbol,
+                    pos.stop_loss,
+                )
+
+        if age_ms >= 24 * 3600 * 1000:
+            if current_price < pos.entry_price * 1.002:
+                self._close_position(pos, current_price, timestamp_ms, "CLOSED_TIMEOUT (24H TIME STOP)")
+                return
+
+        # 3. If TP1 hit (+3.5%), trail stop loss to Breakeven (+0.2% fee coverage)
         if not pos.tp1_hit and current_price >= pos.take_profit_1:
             pos.tp1_hit = True
-            pos.stop_loss = pos.entry_price * 1.002  # Cover fee / breakeven
+            pos.stop_loss = max(pos.stop_loss, pos.entry_price * 1.002)  # Cover fee / breakeven
             logger.info("[PAPER TRADE TP1 REACHED] %s @ $%.6f (+3.5%%) | Stop trailed to Breakeven", symbol, current_price)
 
-        # 3. Check TP2 (+7.5% runner target)
+        # 4. Check TP2 (+7.5% runner target)
         if current_price >= pos.take_profit_2:
             self._close_position(pos, current_price, timestamp_ms, "CLOSED_TP2 (+7.5% TARGET)")
             return
 
-        # 4. Check Stop Loss (or Breakeven stop)
+        # 5. Check Stop Loss (or Breakeven stop)
         if current_price <= pos.stop_loss:
-            reason = "CLOSED_BE" if pos.tp1_hit else "CLOSED_SL"
+            reason = "CLOSED_BE" if pos.tp1_hit or pos.stop_loss >= pos.entry_price else "CLOSED_SL"
             self._close_position(pos, current_price, timestamp_ms, reason)
             return
 

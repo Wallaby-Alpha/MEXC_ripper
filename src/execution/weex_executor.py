@@ -333,6 +333,60 @@ class WeexExecutor(BaseExecutor):
     def update_price(self, symbol: str, current_price: float, timestamp_ms: int):
         self.paper.update_price(symbol, current_price, timestamp_ms)
 
+        if not self.live_enabled:
+            return
+
+        # Check for Breakeven Ratchet on Live WEEX Position (+1.5% gain halfway to TP1)
+        pos_info = self.live_positions.get(symbol)
+        if pos_info and not pos_info.get("be_ratcheted", False):
+            pos_info["current_price"] = current_price
+            entry_p = float(pos_info.get("entry_price", 0.0))
+            if entry_p > 0 and current_price >= entry_p * 1.015:
+                weex_symbol = pos_info.get("weex_symbol") or self.resolver.resolve(symbol)
+                qty_str = pos_info.get("qty_str")
+                be_price = entry_p * 1.002
+                be_price_str = self.resolver.format_price(weex_symbol, be_price)
+                try:
+                    self.client.set_position_tpsl(
+                        symbol=weex_symbol,
+                        position_side="LONG",
+                        sl_price=be_price_str,
+                    )
+                    logger.info(
+                        "[WEEX LIVE BREAKEVEN RATCHET] %s hit +1.5%% gain! Trailed native SL to Breakeven @ $%s (+0.2%% fee cushion)",
+                        symbol,
+                        be_price_str,
+                    )
+                    # Update dedicated trigger SL order if present
+                    tpsl_info = self.active_tpsl_orders.get(symbol, {})
+                    old_sl_id = tpsl_info.get("sl_order_id")
+                    if old_sl_id and old_sl_id != "ATTACHED_ON_ENTRY":
+                        try:
+                            self.client.cancel_tpsl_order(weex_symbol, old_sl_id)
+                        except Exception:
+                            pass
+                        try:
+                            sl_res = self.client.place_tpsl_order(
+                                symbol=weex_symbol,
+                                plan_type="STOP_LOSS",
+                                trigger_price=be_price_str,
+                                size=qty_str,
+                                position_side="LONG",
+                            )
+                            if isinstance(sl_res, dict) and (
+                                sl_res.get("orderId")
+                                or (isinstance(sl_res.get("data"), dict) and sl_res["data"].get("orderId"))
+                            ):
+                                tpsl_info["sl_order_id"] = str(sl_res.get("orderId") or sl_res["data"]["orderId"])
+                                tpsl_info["sl_price"] = be_price_str
+                        except Exception as e_sl:
+                            logger.warning("Could not replace SL trigger order to breakeven: %s", e_sl)
+                    pos_info["be_ratcheted"] = True
+                except Exception as rat_err:
+                    logger.warning("Failed updating native stop loss to breakeven for %s: %s", symbol, rat_err)
+        elif pos_info:
+            pos_info["current_price"] = current_price
+
     def close_position(self, symbol: str, reason: str = "MANUAL_CLOSE") -> Optional[Dict[str, Any]]:
         pos_info = self.live_positions.pop(symbol, None)
         if not self.live_enabled:
@@ -386,8 +440,10 @@ class WeexExecutor(BaseExecutor):
 
         return self.paper.close_position(symbol, reason)
 
-    def enforce_time_stops(self, max_age_ms: int = 6 * 3600 * 1000) -> List[str]:
-        """Scans tracked live positions and actively closes any open >= 6 hours."""
+    def enforce_time_stops(self, max_age_ms: int = 24 * 3600 * 1000) -> List[str]:
+        """Scans tracked live positions and actively closes stagnant underwater trades open >= 24 hours.
+        CRITICAL: Never closes a position that is in profit or developing normally!
+        """
         if not self.live_enabled:
             return []
 
@@ -397,26 +453,37 @@ class WeexExecutor(BaseExecutor):
         # 1. Check internally tracked live positions
         for sym, info in list(self.live_positions.items()):
             entry_t = info.get("entry_time_ms")
+            entry_p = float(info.get("entry_price", 0.0))
+            curr_p = float(info.get("current_price", entry_p))
+
+            # Never close a trade in profit on time stop!
+            if entry_p > 0 and curr_p >= entry_p * 1.002:
+                continue
+
             if entry_t and (now_ms - entry_t) >= max_age_ms:
                 dur_hours = (now_ms - entry_t) / (3600 * 1000)
-                logger.info("[WEEX 6H TIME STOP TRIGGERED] Closing %s (held %.1f hours)", sym, dur_hours)
-                self.close_position(sym, reason="CLOSED_TIMEOUT (6H TIME STOP)")
+                logger.info("[WEEX 24H TIME STOP TRIGGERED] Closing stagnant underwater %s (held %.1f hours)", sym, dur_hours)
+                self.close_position(sym, reason="CLOSED_TIMEOUT (24H TIME STOP)")
                 closed_symbols.append(sym)
 
-        # 2. Check exchange live positions for any untracked or stale positions >= 6h
+        # 2. Check exchange live positions for any untracked or stale positions >= 24h
         try:
             exchange_positions = self.client.get_open_positions()
             for p in exchange_positions:
                 raw_sym = str(p.get("symbol", "")).upper().replace("CMT_", "").replace("_USDT", "USDT")
-                # Look for open time in exchange payload (ctime / openTime / uTime)
+                # Do not close if exchange position has positive unrealized PnL!
+                unrealized = float(p.get("unrealizedPL") or p.get("unrealisedPnl") or p.get("upl") or 0.0)
+                if unrealized > 0:
+                    continue
+
                 ctime_raw = p.get("cTime") or p.get("openTime") or p.get("ctime") or p.get("uTime")
                 if ctime_raw:
                     try:
                         ctime_ms = int(ctime_raw)
                         if (now_ms - ctime_ms) >= max_age_ms:
                             dur_hours = (now_ms - ctime_ms) / (3600 * 1000)
-                            logger.info("[WEEX EXCHANGE 6H TIME STOP] Closing stale %s (held %.1f hours on exchange)", raw_sym, dur_hours)
-                            self.close_position(raw_sym, reason="CLOSED_TIMEOUT (6H TIME STOP)")
+                            logger.info("[WEEX EXCHANGE 24H TIME STOP] Closing stale underwater %s (held %.1f hours on exchange)", raw_sym, dur_hours)
+                            self.close_position(raw_sym, reason="CLOSED_TIMEOUT (24H TIME STOP)")
                             if raw_sym not in closed_symbols:
                                 closed_symbols.append(raw_sym)
                     except (ValueError, TypeError):

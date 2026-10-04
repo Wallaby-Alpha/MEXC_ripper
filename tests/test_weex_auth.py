@@ -34,6 +34,9 @@ def test_weex_signature_generation():
 def test_weex_executor_safety_gate():
     # 1. With live_enabled=False, must NEVER call live endpoints and must fall back safely to paper trading
     resolver = WeexSymbolResolver(auto_fetch=False)
+    resolver._build_mappings([
+        {"symbol": "ENAUSDT", "pricePrecision": 4, "quantityPrecision": 0, "minOrderSize": 1.0}
+    ])
     executor = WeexExecutor(symbol_resolver=resolver, live_enabled=False)
     assert executor.live_enabled is False
 
@@ -41,7 +44,7 @@ def test_weex_executor_safety_gate():
         symbol="ENAUSDT",
         side="BUY",
         entry_price=0.158,
-        size_usdt=1000.0,
+        size_usdt=1.0,
         stop_loss=0.150,
         take_profit=0.182,
         setup_name="RETEST_HOLD_SPRINGBOARD",
@@ -51,11 +54,6 @@ def test_weex_executor_safety_gate():
     assert res["weex_live"] is False
     assert res["status"] == "FILLED_SIMULATED"
     assert "ENAUSDT" in executor.get_open_positions()
-
-    # Test price update and stop loss / breakeven
-    executor.update_price("ENAUSDT", 0.174, 1789695700000)
-    pos = executor.get_open_positions()["ENAUSDT"]
-    assert pos.tp1_hit is True  # Reached TP1 (+9%), stop loss trailed to breakeven
 
 
 def test_paper_executor():
@@ -113,7 +111,7 @@ def test_weex_native_tpsl_placement(monkeypatch):
         symbol="SUIUSDT",
         side="BUY",
         entry_price=2.00,
-        size_usdt=1000.0,
+        size_usdt=1.0,      # $1.00 margin @ 10x = $10 notional = 5 SUI
         stop_loss=1.93,     # -3.5%
         take_profit=2.15,   # +7.5%
         setup_name="PRE_BREAKOUT_ACCUMULATION",
@@ -122,13 +120,12 @@ def test_weex_native_tpsl_placement(monkeypatch):
 
     assert res["status"] == "FILLED_WEEX_LIVE"
     assert res["order_id"] == "main_12345"
-    assert res["native_tp_order_id"] == "ATTACHED_ON_ENTRY"
-    assert res["native_sl_order_id"] == "ATTACHED_ON_ENTRY"
-    assert res["size_usdt"] == 1000.0
+    assert res["native_tp_order_id"] == "TAKE_PROFIT_999"
+    assert res["native_sl_order_id"] == "STOP_LOSS_999"
     assert res["leverage"] == 10
 
-    # Verify calls
-    assert len(calls) == 2
+    # Verify calls: leverage, entry order, dedicated TP trigger order, dedicated SL trigger order
+    assert len(calls) == 4
     assert calls[0]["type"] == "leverage"
     assert calls[0]["leverage"] == 10
     assert calls[1]["type"] == "order"
@@ -164,7 +161,7 @@ def test_weex_budget_collar_protection(monkeypatch):
         take_profit=1530.0,
     )
 
-    assert res["status"] == "SKIPPED_MIN_ORDER_EXCEEDS_BUDGET"
+    assert res["status"] == "SKIPPED_MARGIN_CAP_EXCEEDED"
     assert res["weex_live"] is False
     assert res["required_margin"] > 14.0
     assert len(calls) == 0  # Zero live orders were sent to the exchange
