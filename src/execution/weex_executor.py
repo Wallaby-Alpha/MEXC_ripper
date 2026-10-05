@@ -136,7 +136,7 @@ class WeexExecutor(BaseExecutor):
                 logger.warning("[WEEX LEVERAGE WARNING] %s leverage set warning: %s", weex_symbol, lev_err)
 
         # Calculate position size: size_usdt is target margin (e.g. $1.00 margin @ 10x = $10.00 notional)
-        target_margin = min(size_usdt, 1.50)  # Hard cap: Max $1.50 margin per trade
+        target_margin = size_usdt
         notional_usdt = target_margin * self.leverage
         raw_qty = notional_usdt / entry_price if entry_price > 0 else 1.0
         qty_str = self.resolver.format_size(weex_symbol, raw_qty)
@@ -147,13 +147,13 @@ class WeexExecutor(BaseExecutor):
         sl_price = float(sl_price_str)
 
         # Capital Budget Protection Collar:
-        # If exchange minOrderSize forces an order that exceeds margin budget by >30% (max $1.30 margin), ABORT!
+        # If exchange minOrderSize forces an order that exceeds margin budget by >30%, ABORT!
         actual_notional = qty * entry_price
         actual_margin = actual_notional / self.leverage if self.leverage > 0 else actual_notional
         max_multiplier = _safe_float_env("WEEX_MAX_MARGIN_MULTIPLIER", 1.30)
         max_allowed_margin = target_margin * max_multiplier
 
-        if actual_margin > max_allowed_margin or actual_margin > 1.50:
+        if actual_margin > max_allowed_margin:
             logger.warning(
                 "[WEEX SKIPPED: MARGIN_CAP_EXCEEDED] %s (%s) order qty %s requires $%.2f margin ($%.2f notional), exceeding target margin $%.2f (collar limit: $%.2f). Live order aborted.",
                 symbol,
