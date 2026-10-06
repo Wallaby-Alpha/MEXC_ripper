@@ -87,12 +87,19 @@ def main():
     tg_chat_id = str(os.getenv("TELEGRAM_CHAT_ID", "")).split("#")[0].strip().strip('"').strip("'")
     raw_live = str(os.getenv("WEEX_LIVE_TRADING_ENABLED", "false")).split("#")[0].strip().strip('"').strip("'").lower()
     weex_live = args.weex_live or (raw_live == "true")
-    raw_size = str(os.getenv("WEEX_TRADE_SIZE_USDT", "1.0")).split("#")[0].strip().strip('"').strip("'")
+    raw_size = str(os.getenv("WEEX_TRADE_SIZE_USDT", "5.0")).split("#")[0].strip().strip('"').strip("'")
     try:
         trade_size_val = float(raw_size)
     except (ValueError, TypeError):
-        trade_size_val = 1.0
-    trade_size = args.trade_size or trade_size_val
+        trade_size_val = 5.0
+    trade_size = args.trade_size if args.trade_size is not None else trade_size_val
+
+    raw_lev = str(os.getenv("WEEX_LEVERAGE", "10")).split("#")[0].strip().strip('"').strip("'")
+    try:
+        leverage_val = int(raw_lev)
+    except (ValueError, TypeError):
+        leverage_val = 10
+    notional_size = trade_size * leverage_val
 
     exec_mode = "WEEX LIVE CAPITAL (Native TP/SL Enforced)" if weex_live else "PAPER TRADING (Zero Live Capital Risk)"
     strategy_mode = "TIER 1 ALPHA ONLY (PRE_BREAKOUT_ACCUMULATION | PF 2.36, 65.2% Win Rate)" if args.alpha_only else "ALL SETUPS"
@@ -102,7 +109,7 @@ def main():
             f"[bold green]MEXC Live Momentum Continuation Scanner - OPTIMIZED EDITION v2.0[/bold green]\n"
             f"Interval: [yellow]{args.interval}[/yellow] | Scan Batch: [cyan]{args.top_coins} liquid alts[/cyan] | Delay: [white]{args.poll_sec}s[/white]\n"
             f"Strategy Filter: [bold green]{strategy_mode}[/bold green]\n"
-            f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Margin Size: [bold yellow]${trade_size:,.2f} USDT ($10 Notional @ 10x)[/bold yellow]\n"
+            f"Min Score: [bold cyan]{args.min_score}/100[/bold cyan] | Margin Size: [bold yellow]${trade_size:,.2f} USDT (${notional_size:,.2f} Notional @ {leverage_val}x)[/bold yellow]\n"
             f"Optimizations Active: [bold cyan]Toxic Blacklist (7 coins), RVOL Ceiling (8.0x), RSI Ceiling (68.0), Max 3 Concurrent Pos, Max 2 Trades/15m[/bold cyan]\n"
             f"Execution Mode: [{'bold red blink' if weex_live else 'bold yellow'}]{exec_mode}[/{'bold red blink' if weex_live else 'bold yellow'}] | Telegram Bot: [{'bold green}ENABLED' if tg_token and not args.no_telegram else 'dim red'}DISABLED{'/bold green' if tg_token and not args.no_telegram else '/dim red'}]",
             border_style="cyan",
